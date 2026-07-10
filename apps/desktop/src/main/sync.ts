@@ -2,6 +2,7 @@ import { app, BrowserWindow } from "electron";
 import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import {
+  checkLeakedPassword,
   createSupabaseClient,
   emptySyncState,
   mintPublicToken,
@@ -904,6 +905,14 @@ export async function setSyncConfig(input: {
 export async function signUp(email: string, password: string): Promise<string> {
   const c = await getClient();
   if (!c) throw new Error("No sync server configured.");
+  // k-anonymity HIBP check (fails open if the API is unreachable) — the
+  // server-side equivalent is a paid Supabase feature, so enforce it here.
+  const leaked = await checkLeakedPassword(password);
+  if (leaked.breached) {
+    throw new Error(
+      "That password has appeared in a known data breach, so it isn't safe to use. Please choose a different one.",
+    );
+  }
   const { data, error } = await c.auth.signUp({ email, password });
   if (error) throw new Error(error.message);
   if (data.session) {

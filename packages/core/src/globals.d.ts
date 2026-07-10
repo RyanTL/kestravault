@@ -31,6 +31,14 @@ declare global {
       }
     | undefined;
 
+  // Minimal fetch surface used by utils/leaked-password.ts. Available on every
+  // target we run on (browsers, Node 18+, RN) — declared minimally for the same
+  // reason as `crypto` above. Hosts can always inject their own implementation.
+  function fetch(
+    url: string,
+    init?: { headers?: Record<string, string> },
+  ): Promise<{ ok: boolean; text(): Promise<string> }>;
+
   // Structured deep clone, used by the in-memory repos to hand back copies rather
   // than internal references. Available on every target we run on (Node 17+,
   // modern browsers, RN with a polyfill) — declared here to avoid pulling in the

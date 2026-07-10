@@ -8,6 +8,14 @@ Release notes for each GitHub Release are pasted from the matching section here.
 
 ## [Unreleased]
 
+### Added
+
+- **Breached-password check at sign-up.** New accounts are checked against
+  the HaveIBeenPwned corpus via the k-anonymity range API (only the first 5
+  characters of the password's SHA-1 are sent, response padding on); breached
+  passwords are rejected with a clear message. Fails open if the API is
+  unreachable, so an outage can never block sign-up.
+
 ## [0.2.0] - 2026-07-09
 
 The cloud release: optional end-to-end vault sync, shared/collaborative vaults,
