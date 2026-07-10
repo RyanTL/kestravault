@@ -47,8 +47,10 @@ jobs:
             args: --linux
     runs-on: ${{ matrix.os }}
     env:
-      # v1 ships unsigned: don't look for signing certs in the keychain.
-      # electron-builder still ad-hoc-signs mac apps (required on arm64).
+      # We ship without an Apple Developer cert: don't look for signing certs
+      # in the keychain. electron-builder then skips mac signing entirely, so
+      # build/adhoc-sign.cjs (afterSign hook) ad-hoc signs the bundle —
+      # without it Gatekeeper calls the download "damaged" with no bypass.
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
     steps:
       - uses: actions/checkout@v4
@@ -122,9 +124,9 @@ jobs:
 
           ### Installing (unsigned builds)
 
-          These builds are not code-signed yet, so your OS will warn on first launch:
+          These builds are not notarized yet, so your OS will warn on first launch:
 
-          - **macOS**: right-click the app → **Open** (or System Settings → Privacy & Security → **Open Anyway**).
+          - **macOS**: opening the app shows "Apple could not verify…". Close that dialog (don't move it to the Trash), then go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**. Terminal alternative: `xattr -d com.apple.quarantine /Applications/KestraVault.app`
           - **Windows**: SmartScreen shows "Windows protected your PC" → **More info** → **Run anyway**.
 
           Verify your download against `SHA256SUMS.txt` below.

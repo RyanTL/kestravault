@@ -55,6 +55,7 @@ _Goal: anyone can download and run KestraVault desktop on **macOS and Windows** 
    - README: add a **Download** section at the top — badge + links to `releases/latest`, per-OS install instructions.
    - **Unsigned-build install notes** (put in README, website, and every release body):
      - macOS: Gatekeeper will warn — right-click → Open (or System Settings → Privacy & Security → Open Anyway).
+       _(Revised 2026-07-10: right-click → Open doesn't exist for these builds. Unsigned Electron bundles fail Gatekeeper as "damaged" outright; v0.3.0 ad-hoc signs them (`apps/desktop/build/adhoc-sign.cjs`) so the bypassable Open Anyway flow applies. Terminal fallback: `xattr -d com.apple.quarantine`.)_
      - Windows: SmartScreen "Windows protected your PC" → More info → Run anyway. Some AV may flag unsigned NSIS; note it's expected and link the checksums.
    - Note: `releases/latest/download/<file>` URLs embed the version in the filename, so the website should **query the releases API client-side** (or be updated per release) rather than hardcoding filenames.
 

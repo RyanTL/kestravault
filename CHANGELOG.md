@@ -8,6 +8,20 @@ Release notes for each GitHub Release are pasted from the matching section here.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-10
+
+### Fixed
+
+- **macOS downloads no longer open to "KestraVault is damaged and can't be
+  opened."** Release builds shipped with no bundle signature at all (only the
+  stock Electron linker signature on the main binary), which Gatekeeper treats
+  as a broken signature and hard-rejects with the "damaged" dialog — no bypass
+  offered. Packaging now ad-hoc signs the app whenever no signing certificate
+  is configured (`apps/desktop/build/adhoc-sign.cjs`), so first launch shows
+  the standard unverified-developer prompt instead (System Settings → Privacy
+  & Security → **Open Anyway**). Already-downloaded 0.2.0 builds can be opened
+  with `xattr -d com.apple.quarantine /Applications/KestraVault.app`.
+
 ### Changed
 
 - **Relicensed AGPL-3.0-or-later → MIT** across the whole repo (`LICENSE`,
@@ -139,5 +153,6 @@ macOS Gatekeeper / Windows SmartScreen steps).
   exists. Notify-only (nothing auto-installs), with an off switch in
   Settings → About that stops all update-related network calls.
 
-[Unreleased]: https://github.com/RyanTL/kestravault/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/RyanTL/kestravault/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/RyanTL/kestravault/releases/tag/v0.3.0
 [0.2.0]: https://github.com/RyanTL/kestravault/releases/tag/v0.2.0

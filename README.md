@@ -30,14 +30,21 @@ Every release ships a `SHA256SUMS.txt` you can verify your download against.
 
 ### First launch on macOS (unsigned build)
 
-Builds aren't code-signed yet, so Gatekeeper warns that the app is from an
-unidentified developer. To open it the first time:
+Builds aren't notarized yet, so Gatekeeper blocks the first launch with an
+*"Apple could not verify KestraVault is free of malware"* warning. To open it:
 
-1. In Finder, **right-click (or Control-click) KestraVault.app → Open → Open**, or
-2. Go to **System Settings → Privacy & Security** and click **Open Anyway**
-   after the blocked-launch prompt.
+1. Close the warning (don't move the app to the Trash), then go to
+   **System Settings → Privacy & Security**, scroll down to the
+   *"KestraVault was blocked"* message, and click **Open Anyway**. Or,
+2. from Terminal, clear the quarantine flag:
+   `xattr -d com.apple.quarantine /Applications/KestraVault.app`
 
 You only need to do this once.
+
+> **v0.2.0 downloads instead say the app *"is damaged and can't be opened"*** —
+> that build shipped with a broken signature (fixed in 0.3.0), and the only
+> way past that dialog is the `xattr` command above (or re-downloading the
+> latest release).
 
 ### First launch on Windows (unsigned build)
 

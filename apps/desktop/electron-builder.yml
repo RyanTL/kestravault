@@ -50,6 +50,13 @@ mac:
   # local build still succeeds. Set to true (with credentials) for distribution.
   notarize: false
 
+# With no certificate configured, electron-builder skips mac signing entirely
+# and Gatekeeper reports the quarantined download as "damaged" (no bypass).
+# This hook ad-hoc signs the bundle in that case so users get the standard
+# unverified-developer prompt (Open Anyway) instead. No-op when a real
+# certificate signed the app, and on Windows/Linux.
+afterSign: build/adhoc-sign.cjs
+
 dmg:
   artifactName: ${productName}-${version}-${arch}.${ext}
 
