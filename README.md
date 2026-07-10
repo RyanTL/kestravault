@@ -24,7 +24,7 @@ for macOS (Apple Silicon + Intel), Windows, and Linux:
 | **macOS — Apple Silicon** | `KestraVault-<version>-arm64.dmg` |
 | **macOS — Intel** | `KestraVault-<version>-x64.dmg` |
 | **Windows** | `KestraVault-<version>-setup.exe` |
-| **Linux** | `KestraVault-<version>-x64.AppImage` or `KestraVault-<version>-x64.deb` |
+| **Linux** | `KestraVault-<version>-x86_64.AppImage` or `KestraVault-<version>-amd64.deb` |
 
 Every release ships a `SHA256SUMS.txt` you can verify your download against.
 
@@ -49,7 +49,7 @@ that's expected for unsigned builds; verify the file against
 ### Linux
 
 Make the AppImage executable (`chmod +x KestraVault-*.AppImage`) and run it, or
-install the `.deb` with `sudo apt install ./KestraVault-*-x64.deb`.
+install the `.deb` with `sudo apt install ./KestraVault-*-amd64.deb`.
 
 Prefer building from source? See [Quick start](#quick-start) below. Code
 signing (and with it silent auto-update) is planned — see
