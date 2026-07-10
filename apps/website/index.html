@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>KestraVault — the second brain that files itself</title>
+    <meta
+      name="description"
+      content="KestraVault is a free, open-source, AI-first notes app. Plain markdown on your disk; a built-in agent that links, files, and maintains your knowledge for you."
+    />
+    <meta property="og:title" content="KestraVault — the second brain that files itself" />
+    <meta
+      property="og:description"
+      content="Free, open source, AI-first. Plain markdown on your disk; a built-in agent keeps it linked and filed."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="assets/app-hero.png" />
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+
+    <header class="nav" id="nav">
+      <div class="nav-inner">
+        <a class="brand" href="#top" aria-label="KestraVault home">
+          <svg class="mark" viewBox="0 0 837 837" aria-hidden="true">
+            <path
+              fill="currentColor"
+              fill-rule="evenodd"
+              d="M77.7 49.3L529.1 49.3L464.5 121.9L156.9 123.2L158.2 586.6L641.3 48L758.8 52L754.9 755.5L662.5 755.5L439.4 527.2L496.1 467.8L682.3 648.6L678.3 129.8L77.7 788.5ZM378.7 595.8L533.1 755.5L236.1 754.2Z"
+            />
+          </svg>
+          <span>KestraVault</span>
+        </a>
+        <nav class="nav-links" aria-label="Main">
+          <a href="#how">How it works</a>
+          <a href="#ai">AI</a>
+          <a href="#compare">Compare</a>
+          <a href="#open">Open source</a>
+          <a class="nav-cta" href="#download">Download</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <!-- ── Hero ─────────────────────────────────────────────────────── -->
+      <section class="hero" id="top">
+        <p class="eyebrow">Free &middot; Open source &middot; Local-first</p>
+        <h1>The second brain<br />that files itself.</h1>
+        <p class="lede">
+          KestraVault is an AI&#8209;first notes app. You write and collect; a built&#8209;in agent
+          links, files, and maintains a living wiki out of it &mdash; plain markdown, local first,
+          yours forever.
+        </p>
+        <div class="cta-row">
+          <a class="btn btn-primary" id="hero-download" href="#download">Download</a>
+          <a
+            class="btn btn-ghost"
+            href="https://github.com/RyanTL/kestravault"
+            rel="noopener"
+            target="_blank"
+            >View the source</a
+          >
+        </div>
+        <p class="cta-note" id="hero-note">macOS &middot; Windows &middot; Linux</p>
+        <figure class="shot hero-shot reveal">
+          <img
+            src="assets/app-hero.png"
+            width="1440"
+            height="900"
+            alt="KestraVault desktop app: a markdown note about spaced repetition with the AI panel open, showing an answer with cited sources and a changed-files feed"
+            fetchpriority="high"
+          />
+        </figure>
+      </section>
+
+      <!-- ── How it works ─────────────────────────────────────────────── -->
+      <section class="section" id="how">
+        <p class="eyebrow">How it works</p>
+        <h2>Three folders. One librarian.</h2>
+        <p class="section-lede">
+          Your vault has a simple contract, so you always know who touches what. No lock&#8209;in,
+          no proprietary blobs &mdash; every page is a markdown file you can open anywhere.
+        </p>
+        <div class="zones reveal">
+          <div class="zone">
+            <code>sources/</code>
+            <h3>Drop things in</h3>
+            <p>
+              Articles, transcripts, papers, half-formed thoughts. Raw material is immutable — the
+              agent reads it, never rewrites it.
+            </p>
+          </div>
+          <div class="zone">
+            <code>wiki/</code>
+            <h3>The agent's shelf</h3>
+            <p>
+              An interlinked knowledge base the AI compiles and keeps current: new sources get
+              merged into the right pages, claims get cited, links get made.
+            </p>
+          </div>
+          <div class="zone">
+            <code>notes/</code>
+            <h3>Entirely yours</h3>
+            <p>
+              Plain manual notes the agent never touches. Daily notes, drafts, journals — the
+              machinery stays out of your way until you ask.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── AI features ──────────────────────────────────────────────── -->
+      <section class="section" id="ai">
+        <p class="eyebrow">The AI part</p>
+        <h2>A librarian, not a chatbot.</h2>
+        <p class="section-lede">
+          Most apps bolt an assistant onto your notes. KestraVault's agent is the maintainer of
+          them &mdash; it does the filing you were never going to do.
+        </p>
+
+        <div class="feature reveal">
+          <div class="feature-text">
+            <h3>Drop a source, it gets filed</h3>
+            <p>
+              Add a podcast transcript and the agent reads it, updates the right wiki pages, adds
+              citations, and shows you a change feed of every file it touched. Guided mode asks
+              first; auto mode just files.
+            </p>
+            <p>
+              Answers are grounded in <em>your</em> vault and come with sources — tap one to open
+              the note it came from.
+            </p>
+          </div>
+          <figure class="shot shot-tall">
+            <img
+              src="assets/ai-panel.png"
+              width="730"
+              height="1660"
+              loading="lazy"
+              alt="The AI panel: an answer with numbered takeaways, a changed-files feed, and source chips linking back to notes"
+            />
+          </figure>
+        </div>
+
+        <div class="feature feature-flip reveal">
+          <div class="feature-text">
+            <h3>Everything connected</h3>
+            <p>
+              Wiki links are first-class: the graph shows how your thinking hangs together, and the
+              agent can summarize a note's whole neighborhood on demand.
+            </p>
+            <p>
+              Links aren't decoration — they're how the agent decides where new knowledge belongs.
+            </p>
+          </div>
+          <figure class="shot">
+            <img
+              src="assets/app-graph.png"
+              width="1440"
+              height="900"
+              loading="lazy"
+              alt="Graph view of the vault with a focused note, its linked neighbors, and a Summarize neighborhood button"
+            />
+          </figure>
+        </div>
+
+        <div class="feature feature-flip-b reveal">
+          <div class="feature-text">
+            <h3>A real markdown editor</h3>
+            <p>
+              Live preview, wiki links, slash commands, daily notes, backlinks — the writing
+              experience stands on its own with the AI turned off.
+            </p>
+            <p>
+              Bring your own model: use your Claude subscription or an API key. Keys live in your
+              OS keychain, and nothing leaves your machine unless you ask.
+            </p>
+          </div>
+          <figure class="shot">
+            <img
+              src="assets/app-editor.png"
+              width="1440"
+              height="900"
+              loading="lazy"
+              alt="The KestraVault editor showing a markdown note in live preview with file tree and breadcrumbs"
+            />
+          </figure>
+        </div>
+      </section>
+
+      <!-- ── Compare ──────────────────────────────────────────────────── -->
+      <section class="section" id="compare">
+        <p class="eyebrow">Compare</p>
+        <h2>Where it sits.</h2>
+        <p class="section-lede">
+          We love Obsidian &mdash; KestraVault is what happens when the AI workflow people bolt
+          onto it comes built in, in one app, for free.
+        </p>
+        <div class="table-wrap reveal">
+          <table class="compare">
+            <thead>
+              <tr>
+                <th scope="col"></th>
+                <th scope="col" class="us">KestraVault</th>
+                <th scope="col">Obsidian</th>
+                <th scope="col">Notion</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row">Plain markdown files on your disk</th>
+                <td class="us"><span class="yes">Yes</span></td>
+                <td><span class="yes">Yes</span></td>
+                <td><span class="no">No &mdash; export only</span></td>
+              </tr>
+              <tr>
+                <th scope="row">Works fully offline</th>
+                <td class="us"><span class="yes">Yes</span></td>
+                <td><span class="yes">Yes</span></td>
+                <td><span class="no">Limited</span></td>
+              </tr>
+              <tr>
+                <th scope="row">AI included</th>
+                <td class="us"><span class="yes">Built-in agent</span></td>
+                <td><span class="no">DIY via plugins</span></td>
+                <td><span class="mid">Paid add&#8209;on</span></td>
+              </tr>
+              <tr>
+                <th scope="row">AI maintains &amp; links notes for you</th>
+                <td class="us"><span class="yes">Yes &mdash; that's the point</span></td>
+                <td><span class="no">No</span></td>
+                <td><span class="no">No</span></td>
+              </tr>
+              <tr>
+                <th scope="row">Answers cite your notes</th>
+                <td class="us"><span class="yes">Yes</span></td>
+                <td><span class="no">DIY</span></td>
+                <td><span class="mid">Partial</span></td>
+              </tr>
+              <tr>
+                <th scope="row">Choose or bring your own model</th>
+                <td class="us"><span class="yes">Yes</span></td>
+                <td><span class="mid">Plugin-dependent</span></td>
+                <td><span class="no">No</span></td>
+              </tr>
+              <tr>
+                <th scope="row">Open source</th>
+                <td class="us"><span class="yes">Yes &mdash; app and backend</span></td>
+                <td><span class="no">No</span></td>
+                <td><span class="no">No</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── Download ─────────────────────────────────────────────────── -->
+      <section class="section" id="download">
+        <p class="eyebrow">Download</p>
+        <h2>Free. No account.</h2>
+        <p class="section-lede" id="release-line">
+          Grab the desktop app and point it at a folder — that's the whole setup.
+        </p>
+        <div class="downloads reveal" id="downloads">
+          <a class="dl" data-asset="mac-arm64" href="https://github.com/RyanTL/kestravault/releases/latest">
+            <span class="dl-os">macOS</span>
+            <span class="dl-detail">Apple Silicon</span>
+          </a>
+          <a class="dl" data-asset="mac-x64" href="https://github.com/RyanTL/kestravault/releases/latest">
+            <span class="dl-os">macOS</span>
+            <span class="dl-detail">Intel</span>
+          </a>
+          <a class="dl" data-asset="win" href="https://github.com/RyanTL/kestravault/releases/latest">
+            <span class="dl-os">Windows</span>
+            <span class="dl-detail">64-bit installer</span>
+          </a>
+          <a class="dl" data-asset="linux" href="https://github.com/RyanTL/kestravault/releases/latest">
+            <span class="dl-os">Linux</span>
+            <span class="dl-detail">AppImage &middot; deb</span>
+          </a>
+        </div>
+        <p class="fine" id="unsigned-note">
+          Builds are unsigned for now. macOS: right&#8209;click the app &rarr; Open. Windows
+          SmartScreen: &ldquo;More info&rdquo; &rarr; &ldquo;Run anyway&rdquo;. Checksums ship with
+          every <a href="https://github.com/RyanTL/kestravault/releases" rel="noopener" target="_blank">release</a>.
+        </p>
+      </section>
+
+      <!-- ── Cloud sync (beta) ────────────────────────────────────────── -->
+      <section class="section" id="cloud">
+        <p class="eyebrow">Cloud sync &mdash; beta</p>
+        <h2>Every device. Shared vaults.</h2>
+        <p class="section-lede">
+          Optional cloud sync keeps a vault identical across your machines and lets you share one
+          with up to three other people &mdash; live presence, an attributed change feed, and
+          conflict copies instead of lost edits. Everyone brings their own AI model.
+        </p>
+        <p class="section-lede">
+          Cloud sync is in <strong>closed beta</strong>: testers get an access code that unlocks
+          full cloud access for life &mdash; redeem it in the app under
+          <em>Settings &rarr; Sync &amp; sharing</em>. Want it with zero cloud? The entire backend
+          is open source and
+          <a
+            href="https://github.com/RyanTL/kestravault/blob/main/selfhost/README.md"
+            rel="noopener"
+            target="_blank"
+            >self-hostable</a
+          >.
+        </p>
+      </section>
+
+      <!-- ── Open source ──────────────────────────────────────────────── -->
+      <section class="section" id="open">
+        <p class="eyebrow">Open source</p>
+        <h2>Built in the open.</h2>
+        <p class="section-lede">
+          The whole thing — app, sync backend, agent — is on GitHub. Read the code, file issues,
+          self-host the backend, or fork it. Your notes should never depend on a company's
+          goodwill.
+        </p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="https://github.com/RyanTL/kestravault" rel="noopener" target="_blank"
+            >Star on GitHub</a
+          >
+          <a
+            class="btn btn-ghost"
+            href="https://github.com/RyanTL/kestravault#readme"
+            rel="noopener"
+            target="_blank"
+            >Read the docs</a
+          >
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        <div class="brand brand-footer">
+          <svg class="mark" viewBox="0 0 837 837" aria-hidden="true">
+            <path
+              fill="currentColor"
+              fill-rule="evenodd"
+              d="M77.7 49.3L529.1 49.3L464.5 121.9L156.9 123.2L158.2 586.6L641.3 48L758.8 52L754.9 755.5L662.5 755.5L439.4 527.2L496.1 467.8L682.3 648.6L678.3 129.8L77.7 788.5ZM378.7 595.8L533.1 755.5L236.1 754.2Z"
+            />
+          </svg>
+          <span>KestraVault</span>
+        </div>
+        <nav class="footer-links" aria-label="Footer">
+          <a href="https://github.com/RyanTL/kestravault" rel="noopener" target="_blank">GitHub</a>
+          <a href="https://github.com/RyanTL/kestravault/releases" rel="noopener" target="_blank">Releases</a>
+          <a
+            href="https://github.com/RyanTL/kestravault/blob/main/SECURITY.md"
+            rel="noopener"
+            target="_blank"
+            >Security</a
+          >
+          <a
+            href="https://github.com/RyanTL/kestravault/blob/main/LICENSE"
+            rel="noopener"
+            target="_blank"
+            >License</a
+          >
+        </nav>
+        <p class="fine">&copy; 2026 KestraVault. Plain files, forever.</p>
+      </div>
+    </footer>
+
+    <script src="main.js" defer></script>
+  </body>
+</html>

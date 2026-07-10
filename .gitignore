@@ -1,0 +1,68 @@
+# Dependencies
+node_modules/
+.pnp.*
+.yarn/*
+
+# Build output
+dist/
+build/
+out/
+.next/
+.turbo/
+*.tsbuildinfo
+
+# Electron (desktop)
+apps/desktop/out/
+apps/desktop/dist/
+# ...but DO track electron-builder's input resources (app icon + entitlements),
+# which the global `build/` rule above would otherwise ignore.
+!apps/desktop/build/
+!apps/desktop/build/**
+
+# Expo / React Native (mobile)
+.expo/
+*.jks
+*.p8
+*.p12
+*.keystore
+*.mobileprovision
+ios/Pods/
+android/.gradle/
+
+# Env & secrets — never commit keys
+.env
+.env.*
+!.env.example
+*.pem
+
+# Supabase
+supabase/.branches/
+supabase/.temp/
+
+# Local app sync state (per data-model.md — client-only, not synced)
+**/.kestravault/sync.db
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Local Claude Code / agent config (per-developer: launch.json, worktrees, etc.)
+.claude/
+
+# Reference inspiration screenshots — kept local, not tracked (remove this line to commit them)
+UI-images/
+
+# Secret-sweep output (scripts/secret-sweep.sh) — may contain partial secrets
+gitleaks-report*.json
+
+# Ryan's personal launch/ops checklist — kept local, not published
+NEEDS-RYAN.md

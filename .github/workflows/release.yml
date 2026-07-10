@@ -1,0 +1,139 @@
+# Release pipeline: pushing a `v*` tag builds installers for macOS (arm64 + x64),
+# Windows, and Linux, then assembles a DRAFT GitHub Release with checksums and
+# the matching CHANGELOG.md section. Only Ryan pushes tags, and drafts stay
+# private, so this is safe to have in place before the repo goes public.
+# Publishing the draft is always a manual, human step.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  # Guard: the tag must match apps/desktop/package.json — electron-builder
+  # stamps artifacts from the package version, so a mismatch would ship
+  # installers whose filenames disagree with the release tag.
+  check:
+    name: Tag matches package version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tag == apps/desktop version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(node -p "require('./apps/desktop/package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match apps/desktop version $PKG_VERSION — bump the package version (and CHANGELOG.md) before tagging."
+            exit 1
+          fi
+
+  build:
+    name: Build (${{ matrix.os }})
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS runner builds both architectures in one pass.
+          - os: macos-14
+            args: --mac --arm64 --x64
+          - os: windows-latest
+            args: --win
+          - os: ubuntu-latest
+            args: --linux
+    runs-on: ${{ matrix.os }}
+    env:
+      # v1 ships unsigned: don't look for signing certs in the keychain.
+      # electron-builder still ad-hoc-signs mac apps (required on arm64).
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # turbo builds @kestravault/core first, then the desktop bundle (electron-vite).
+      - name: Build
+        run: pnpm build
+
+      - name: Package installers
+        run: pnpm --filter @kestravault/desktop exec electron-builder ${{ matrix.args }}
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          path: |
+            apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.zip
+            apps/desktop/dist/*.exe
+            apps/desktop/dist/*.AppImage
+            apps/desktop/dist/*.deb
+          if-no-files-found: error
+
+  release:
+    name: Draft GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download installers
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS.txt
+        run: |
+          cd artifacts
+          sha256sum * | tee SHA256SUMS.txt
+
+      # Release notes = this version's CHANGELOG.md section + the unsigned-build
+      # install steps every release body must carry (see plan/launch-v1.md).
+      - name: Assemble release notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { on = 1; next }
+            on && /^## \[/ { exit }
+            on { print }
+          ' CHANGELOG.md > release-notes.md
+          if ! grep -q '[^[:space:]]' release-notes.md; then
+            echo "::error::CHANGELOG.md has no section for $VERSION — add one before tagging."
+            exit 1
+          fi
+          cat >> release-notes.md <<'EOF'
+
+          ---
+
+          ### Installing (unsigned builds)
+
+          These builds are not code-signed yet, so your OS will warn on first launch:
+
+          - **macOS**: right-click the app → **Open** (or System Settings → Privacy & Security → **Open Anyway**).
+          - **Windows**: SmartScreen shows "Windows protected your PC" → **More info** → **Run anyway**.
+
+          Verify your download against `SHA256SUMS.txt` below.
+          EOF
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          name: KestraVault ${{ github.ref_name }}
+          body_path: release-notes.md
+          files: artifacts/*

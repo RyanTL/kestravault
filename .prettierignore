@@ -1,0 +1,11 @@
+**/dist/**
+**/build/**
+**/out/**
+**/.turbo/**
+**/node_modules/**
+pnpm-lock.yaml
+
+# Env-substituted at container boot via an eval-echo trick that strips double
+# quotes; Prettier quote normalization would corrupt it (see the kong service
+# entrypoint in selfhost/docker-compose.yml).
+selfhost/volumes/api/kong.yml

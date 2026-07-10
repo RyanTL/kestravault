@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest an improvement or a new capability.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, skim the [roadmap](../blob/main/plan/roadmap.md) — cloud sync,
+        the autonomous wiki agent, and mobile are already planned.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the situation where KestraVault falls short, not just the feature itself.
+      placeholder: "When I …, I have to …, which is slow/awkward because …"
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
+      description: Workarounds you use today, or other apps that do this well.

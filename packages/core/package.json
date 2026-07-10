@@ -1,0 +1,33 @@
+{
+  "name": "@kestravault/core",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "description": "Platform-agnostic logic for KestraVault: data models, utilities, (later) sync engine + clients. No DOM / Electron / React Native imports.",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "yaml": "^2.6.1"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.8"
+  }
+}

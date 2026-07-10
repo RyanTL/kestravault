@@ -1,0 +1,10 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+allowBuilds:
+  # electron downloads its platform binary in a postinstall; apps/desktop needs
+  # it to launch. Trusted, essential build dependency.
+  electron: true
+  # esbuild ships a native binary via its postinstall; vitest (→ vite → esbuild)
+  # needs it. Trusted, essential build dependency.
+  esbuild: true

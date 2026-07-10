@@ -1,0 +1,25 @@
+# Gitleaks config — the pre-flip secret sweep from plan/launch-v1.md.
+# Run locally with scripts/secret-sweep.sh (full git history, report only);
+# CI runs the same scan on every push/PR via .github/workflows/ci.yml.
+title = "KestraVault secret scan"
+
+[extend]
+# Start from gitleaks' built-in ruleset (AWS, GitHub, Anthropic, OpenAI, generic
+# api-key entropy rules, …) and only add allowlist entries below.
+useDefault = true
+
+[allowlist]
+description = "Known non-secrets"
+paths = [
+  # Lockfile integrity hashes trip generic entropy rules.
+  '''pnpm-lock\.yaml''',
+]
+regexes = [
+  # Documentation placeholders like sk-ant-… / sk-or-… (Settings key hints).
+  '''sk-(ant-|or-)?…''',
+  # The hosted Supabase ANON key (apps/desktop/src/main/hosted.ts) — a public
+  # client credential by design (RLS is the security boundary), committed on
+  # purpose so downloaded builds sync out of the box. Never allowlist a
+  # service_role key; sweep for those with: git grep InNlcnZpY2Vfcm9sZSI
+  '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxvZ215eWhwa3RyaWNod2d1bXNkIiwicm9sZSI6ImFub24i''',
+]

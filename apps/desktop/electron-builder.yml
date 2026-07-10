@@ -1,0 +1,74 @@
+# electron-builder configuration — turns the electron-vite build in `out/` into
+# desktop installers. Run via the package.json `build:*` scripts (which run
+# `electron-vite build` first). Docs: https://www.electron.build/configuration
+#
+# NOTE (pnpm monorepo): the app depends on the workspace package `@kestravault/core`,
+# so run `pnpm build` once before packaging so its `dist/` exists, and verify the
+# packaged app launches. If a production dependency is missing from the bundle,
+# it's the known pnpm-symlink hoisting issue — set `node-linker=hoisted` in
+# `.npmrc` (or use `pnpm deploy`) and rebuild.
+appId: com.kestravault.desktop
+productName: KestraVault
+copyright: Copyright © 2026 KestraVault contributors
+
+directories:
+  # Icons + entitlements live in build/; installers are written to dist/.
+  buildResources: build
+  output: dist
+
+# All-exclusion list: start from everything electron-builder collects (the `out/`
+# bundle + production node_modules) and drop source, configs, and dev files.
+files:
+  - "!**/.vscode/*"
+  - "!**/.turbo/*"
+  - "!src/*"
+  - "!electron.vite.config.{js,ts,mjs,cjs}"
+  - "!electron-builder.yml"
+  - "!{.eslintrc,.eslintrc.*,.prettierrc,.prettierrc.*,.prettierignore}"
+  - "!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}"
+  - "!{README.md,CHANGELOG.md}"
+  - "!{.env,.env.*,.npmrc,pnpm-lock.yaml}"
+
+asar: true
+# Don't auto-publish; `dist` just produces local artifacts.
+publish: null
+
+# ── macOS ──
+mac:
+  category: public.app-category.productivity
+  target:
+    - dmg
+    - zip
+  # Explicit ${arch} so the release workflow's arm64 + x64 builds land
+  # side-by-side with predictable names (the default omits arch on x64 zips).
+  artifactName: ${productName}-${version}-${arch}-mac.${ext}
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # Notarization needs an Apple Developer account; off by default so an unsigned
+  # local build still succeeds. Set to true (with credentials) for distribution.
+  notarize: false
+
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+# ── Windows ──
+win:
+  target:
+    - nsis
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  artifactName: ${productName}-${version}-setup.${ext}
+
+# ── Linux ──
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Office
+  maintainer: KestraVault contributors
+  artifactName: ${productName}-${version}-${arch}.${ext}

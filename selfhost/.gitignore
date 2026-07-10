@@ -1,0 +1,4 @@
+# Live configuration + data — never commit.
+.env
+backups/
+volumes/storage/
