@@ -49,4 +49,4 @@ Please **don't** file security vulnerabilities as public issues — see
 ## License
 
 By contributing, you agree that your contributions are licensed under the
-project's [GNU AGPLv3 License](LICENSE).
+project's [MIT License](LICENSE).

@@ -8,6 +8,13 @@ Release notes for each GitHub Release are pasted from the matching section here.
 
 ## [Unreleased]
 
+### Changed
+
+- **Relicensed AGPL-3.0-or-later → MIT** across the whole repo (`LICENSE`,
+  every `package.json`, README, CONTRIBUTING) while KestraVault has a single
+  copyright holder. Plan docs keep the original AGPL decision records with
+  dated revision notes.
+
 ### Added
 
 - **Breached-password check at sign-up.** New accounts are checked against

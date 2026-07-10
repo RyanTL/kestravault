@@ -45,7 +45,7 @@ TypeScript monorepo (pnpm + turborepo).
 - **Vault skills (Ingest / Lint):** chat buttons that run a real tool-using agent on the vault — sandboxed to `wiki/**`, `index.md`, `log.md` — with live progress and changed-file chips (Claude subscription / Anthropic API).
 - **Theming:** dark-first minimal theme with light/dark/system switch.
 - **Packaging:** electron-builder for macOS (.dmg/.zip), Windows (NSIS), Linux (AppImage/.deb) — currently unsigned.
-- **OSS hygiene:** AGPLv3 license, README, SECURITY.md, CONTRIBUTING.md, Electron navigation/link hardening.
+- **OSS hygiene:** MIT license, README, SECURITY.md, CONTRIBUTING.md, Electron navigation/link hardening.
 - **Core building blocks:** data model, ingest logic, and a 3-way merge engine exist in `packages/core`.
 
 > The desktop AI is a local stand-in for the eventual cloud Managed Agent. The core ingest/wiki-maintenance loop is not wired up yet.

@@ -164,9 +164,8 @@ PRs welcome. Read **[CONTRIBUTING.md](CONTRIBUTING.md)** and **[AGENTS.md](AGENT
 
 ## License
 
-[AGPLv3](LICENSE) — the apps, packages, schema, and agent prompts are free
-software, so you can self-host with your own or local models. If you run a
-modified version as a network service, the AGPL requires you to offer users
-that version's source. See [plan/vision.md](plan/vision.md) and
+[MIT](LICENSE) — the apps, packages, schema, and agent prompts are free and
+open source, so you can use, modify, self-host, and build on all of it with
+your own or local models. See [plan/vision.md](plan/vision.md) and
 [plan/sync-collab-open-core.md](plan/sync-collab-open-core.md) for the
 open-core intent.

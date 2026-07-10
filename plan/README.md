@@ -24,7 +24,7 @@ We collapse all of that into one synced, cross-platform, AI-first app.
 | [agent-loop.md](agent-loop.md) | The ingest & query loops step by step, Managed Agents session flow, model routing, cost controls. |
 | [roadmap.md](roadmap.md) | Phases (**Private Beta → MVP → Post-MVP**) with trackable checklists. **Keep this updated as we build.** |
 | [launch-v1.md](launch-v1.md) | The v1 free-launch execution plan: release CI, unsigned mac/win downloads via GitHub + website, update notifications. |
-| [sync-collab-open-core.md](sync-collab-open-core.md) | Sync + **shared workspaces (up to 4: owner + 3, owner-funds-hosting/members-BYO-key)** + **note publishing (public read-only links)** + the open-core model: **one AGPLv3 repo, backend included (Cal.com-style)**, hosted service = the business. |
+| [sync-collab-open-core.md](sync-collab-open-core.md) | Sync + **shared workspaces (up to 4: owner + 3, owner-funds-hosting/members-BYO-key)** + **note publishing (public read-only links)** + the open-core model: **one fully open repo, backend included (Cal.com-style; MIT since 2026-07-09)**, hosted service = the business. |
 | [self-hosting.md](self-hosting.md) | Run the whole stack yourself — **home server + Tailscale** (MagicDNS, free TLS, works behind CGNAT). **Built 2026-07-03:** `selfhost/` compose stack + scripts + desktop Settings → Sync server. Honest gap: managed agent → portable BYO-key loop (Post-MVP). |
 | [open-questions.md](open-questions.md) | Unresolved decisions and known risks. |
 | [agent-workflow.md](agent-workflow.md) | How to run 2–3 AI agents in parallel without collisions (Claude Code + Codex). |

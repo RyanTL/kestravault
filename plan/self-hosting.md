@@ -1,6 +1,6 @@
 # Self-Hosting
 
-_Drafted 2026-07-03; **built 2026-07-03** (same day — see "What shipped" below). How someone runs the whole stack themselves. Self-hosting is already **allowed and license-supported** ([sync-collab-open-core.md](sync-collab-open-core.md): one AGPLv3 repo, backend included, Cal.com-style) — this doc turns "permitted" into "paved," with the **Tailscale path** as the blessed way to reach a **home server**._
+_Drafted 2026-07-03; **built 2026-07-03** (same day — see "What shipped" below). How someone runs the whole stack themselves. Self-hosting is already **allowed and license-supported** (MIT since 2026-07-09) ([sync-collab-open-core.md](sync-collab-open-core.md): one AGPLv3 repo, backend included, Cal.com-style) — this doc turns "permitted" into "paved," with the **Tailscale path** as the blessed way to reach a **home server**._
 
 ## What shipped (2026-07-03)
 

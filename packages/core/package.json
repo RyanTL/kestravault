@@ -2,7 +2,7 @@
   "name": "@kestravault/core",
   "version": "0.0.0",
   "private": true,
-  "license": "AGPL-3.0-or-later",
+  "license": "MIT",
   "type": "module",
   "description": "Platform-agnostic logic for KestraVault: data models, utilities, (later) sync engine + clients. No DOM / Electron / React Native imports.",
   "main": "./dist/index.js",

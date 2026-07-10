@@ -183,7 +183,7 @@ not generate types.)
 ## Self-hosting (open core)
 
 The entire backend in this folder is what the hosted KestraVault Cloud runs — you
-can run it yourself (AGPLv3). Bring up a Supabase project (hosted or your own
+can run it yourself (MIT). Bring up a Supabase project (hosted or your own
 stack), apply the migrations, then bypass billing on your instance once:
 
 ```sql

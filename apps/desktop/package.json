@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "license": "AGPL-3.0-or-later",
+  "license": "MIT",
   "description": "KestraVault desktop app: Electron + React (DOM) + CodeMirror 6. Three-pane shell — see README.",
   "author": "KestraVault contributors",
   "homepage": "https://github.com/RyanTL/kestravault",

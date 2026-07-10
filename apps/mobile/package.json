@@ -2,7 +2,7 @@
   "name": "@kestravault/mobile",
   "version": "0.0.0",
   "private": true,
-  "license": "AGPL-3.0-or-later",
+  "license": "MIT",
   "type": "module",
   "description": "KestraVault mobile app: React Native (Expo) + CodeMirror 6 in a WebView. Shell scaffold — see README.",
   "scripts": {
