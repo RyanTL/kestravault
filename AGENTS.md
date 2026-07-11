@@ -4,7 +4,7 @@ Single source of truth for **any** agent (Claude Code, Codex, others) or human w
 Claude Code reads `CLAUDE.md`, which points here. Keep shared rules in **this** file so every agent stays in sync.
 
 ## What this is
-An open-source, AI-first second brain: a cloud agent maintains an interlinked markdown **wiki** from your **raw sources**. Full plan in **`./plan/`** — read `plan/README.md` first.
+An open-source, AI-first second brain: an AI agent organizes, cross-links, and indexes the user's markdown notes inside a structure the **user** chooses (defined in each vault's AI guide, `.kestravault/instructions.md`). Full plan in **`./plan/`** — read `plan/README.md` first.
 
 ## Stack (locked — see `plan/architecture.md`)
 - **TypeScript everywhere.** Monorepo (pnpm workspaces + turborepo).
@@ -28,7 +28,7 @@ Packages are scoped `@kestravault/*` (`core`, `desktop`, `mobile`). Shortcuts: `
 
 ## Ground rules
 - **Markdown is the source of truth.** Never swap CodeMirror for a lossy WYSIWYG editor.
-- **Respect the three zones & agent permissions** (`plan/data-model.md`): `sources/` immutable, `wiki/` agent-owned, `notes/` human-owned.
+- **The vault's structure belongs to the user.** Never hard-code a folder layout; the AI guide (`.kestravault/instructions.md`) defines each vault's structure and the agent's rules. Agent ops may create/edit/move notes but never delete, and app metadata (dotfiles) stays read-only except the guide itself.
 - Keep `packages/core` platform-agnostic.
 - **Secrets:** read from env only; never hardcode or commit keys.
 - Small PRs, one scoped task each, conventional commits.

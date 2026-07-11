@@ -19,6 +19,7 @@ import {
   timeContext,
 } from "@renderer/vault/aiPrompts";
 import { INSTRUCTIONS_PATH, brainContext } from "@renderer/vault/brain";
+import { readCustomSkills, toVaultSkill } from "@renderer/vault/skills";
 import { isPrivateNote } from "@renderer/vault/notePrivacy";
 import { noteName } from "@renderer/vault/paths";
 import { recordActivity } from "@renderer/vault/activityLog";
@@ -52,9 +53,10 @@ interface AIChatPanelProps {
   effort: EffortLevel;
   onEffortChange: (e: EffortLevel) => void;
   supportsEffort: boolean;
-  /** Display name of the active provider, and whether it's the Claude login. */
+  /** Display name of the active provider. */
   providerLabel: string;
-  isSubscription: boolean;
+  /** Which no-API-key login the provider uses, if any (drives the connect card). */
+  subscription: "claude" | "chatgpt" | null;
   /** Provider runs on the user's machine (Ollama / LM Studio) → Private notes are unrestricted. */
   aiIsLocal: boolean;
   /** Provider can run vault skills (tool-using agent ops): Claude sub or Anthropic API. */
@@ -106,7 +108,7 @@ export function AIChatPanel({
   onEffortChange,
   supportsEffort,
   providerLabel,
-  isSubscription,
+  subscription,
   aiIsLocal,
   agentCapable,
   preset,
@@ -131,6 +133,22 @@ export function AIChatPanel({
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const { conn, status, checkStatus, recheck, stream, agentRun } = controller;
+
+  // Built-in skills plus the user's own (stored in the vault as
+  // .kestravault/skills.json, managed in Settings → AI guide). Re-read when
+  // the vault's files change so edits made in Settings show up immediately.
+  const [customSkills, setCustomSkills] = useState<VaultSkill[]>([]);
+  useEffect(() => {
+    let alive = true;
+    void readCustomSkills().then((list) => {
+      if (alive) setCustomSkills(list.map(toVaultSkill));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [files]);
+  const allSkills = useMemo(() => [...VAULT_SKILLS, ...customSkills], [customSkills]);
+
   const activeChat = chats.activeChat;
   const turns = activeChat.turns;
   const activePrivacyMode: PrivacyMode = useMemo(() => {
@@ -283,9 +301,9 @@ export function AIChatPanel({
     ],
   );
 
-  // Run a vault skill (Ingest / Lint): a tool-using agent run in the main
-  // process, streamed into the chat like a normal turn plus a live "working"
-  // line and, at the end, chips for every file it created or updated.
+  // Run a vault skill: a tool-using agent run in the main process, streamed
+  // into the chat like a normal turn plus a live "working" line and, at the
+  // end, chips for every file it created, updated, or moved.
   const runSkill = useCallback(
     (skill: VaultSkill) => {
       if (busy) return;
@@ -317,7 +335,7 @@ export function AIChatPanel({
         role: "assistant",
         content: "",
         streaming: true,
-        working: "Reading brain instructions…",
+        working: "Reading the vault guide…",
       };
       chats.updateTurns(chatId, (prev) => [...prev, userTurn, aTurn]);
       setBusy(true);
@@ -336,8 +354,12 @@ export function AIChatPanel({
       // mode; non-Claude providers have no ladder and keep the chat model.
       const runModel = agentModelFor(preset, model, runMode);
       const handle = agentRun(
-        skill.id,
-        { targetPath: skill.needsNote ? (activePath ?? undefined) : undefined, model: runModel },
+        skill.op,
+        {
+          targetPath: skill.needsNote ? (activePath ?? undefined) : undefined,
+          model: runModel,
+          prompt: skill.prompt,
+        },
         {
           onDelta: (delta) =>
             chats.updateTurns(chatId, (prev) =>
@@ -348,9 +370,11 @@ export function AIChatPanel({
               working:
                 action === "write"
                   ? `Editing ${path}…`
-                  : action === "read"
-                    ? `Reading ${path ?? "the vault"}…`
-                    : "Searching the vault…",
+                  : action === "move"
+                    ? `Moving ${path}…`
+                    : action === "read"
+                      ? `Reading ${path ?? "the vault"}…`
+                      : "Searching the vault…",
             }),
           onDone: (fullText, changed) => {
             setBusy(false);
@@ -424,11 +448,11 @@ export function AIChatPanel({
   }, [input]);
   const slashSkills = useMemo(() => {
     if (slashQuery === null) return [] as VaultSkill[];
-    if (slashQuery === "") return VAULT_SKILLS;
-    return VAULT_SKILLS.filter(
+    if (slashQuery === "") return allSkills;
+    return allSkills.filter(
       (s) => s.id.includes(slashQuery) || s.label.toLowerCase().includes(slashQuery),
     );
-  }, [slashQuery]);
+  }, [slashQuery, allSkills]);
   const slashOpen = slashQuery !== null && slashSkills.length > 0;
   useEffect(() => setSlashActive(0), [slashQuery]);
 
@@ -449,10 +473,10 @@ export function AIChatPanel({
   useEffect(() => {
     if (skillReq && skillReq.token !== lastSkill.current) {
       lastSkill.current = skillReq.token;
-      const skill = VAULT_SKILLS.find((s) => s.id === skillReq.id);
+      const skill = allSkills.find((s) => s.id === skillReq.id);
       if (skill) runSkillRef.current(skill);
     }
-  }, [skillReq]);
+  }, [skillReq, allSkills]);
 
   const onComposerKey = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     if (slashOpen) {
@@ -538,7 +562,7 @@ export function AIChatPanel({
         {disconnected ? (
           <ConnectCard
             status={status}
-            isSubscription={isSubscription}
+            subscription={subscription}
             providerLabel={providerLabel}
             onRecheck={() => void recheck()}
             onOpenSettings={onOpenSettings}
@@ -548,6 +572,7 @@ export function AIChatPanel({
             checking={conn === "checking" || conn === "unknown"}
             providerLabel={providerLabel}
             hasNote={!!activePath}
+            skills={allSkills}
             onAction={(prompt) => void send(prompt, { forcePage: true })}
             onSuggest={(q) => {
               setScope("vault");
@@ -582,12 +607,18 @@ export function AIChatPanel({
                         <span className="ai-sources-label">Changed files</span>
                         {t.changed.map((c) => (
                           <button
-                            key={c.path}
+                            key={`${c.op}-${c.path}`}
                             className="ai-source-chip"
                             onClick={() => onOpenNote(c.path)}
-                            title={`${c.op === "create" ? "Created" : "Updated"} ${c.path}`}
+                            title={
+                              c.op === "create"
+                                ? `Created ${c.path}`
+                                : c.op === "move"
+                                  ? `Moved ${c.from ?? "?"} → ${c.path}`
+                                  : `Updated ${c.path}`
+                            }
                           >
-                            <AiIcon name="doc" /> {c.op === "create" ? "+ " : ""}
+                            <AiIcon name="doc" /> {c.op === "create" ? "+ " : c.op === "move" ? "→ " : ""}
                             {c.path}
                           </button>
                         ))}
@@ -625,7 +656,7 @@ export function AIChatPanel({
                   className="ai-slash-head"
                   title={
                     agentCapable
-                      ? "Vault skills — agent operations on your wiki"
+                      ? "Vault skills — agent operations on your notes. Add your own in Settings → AI guide."
                       : "Vault skills need Claude (subscription or Anthropic API)"
                   }
                 >
@@ -904,6 +935,7 @@ function EmptyState({
   checking,
   providerLabel,
   hasNote,
+  skills: allSkills,
   onAction,
   onSuggest,
   onSkill,
@@ -911,11 +943,12 @@ function EmptyState({
   checking: boolean;
   providerLabel: string;
   hasNote: boolean;
+  skills: VaultSkill[];
   onAction: (prompt: string) => void;
   onSuggest: (q: string) => void;
   onSkill: (skill: VaultSkill) => void;
 }) {
-  const skills = VAULT_SKILLS.filter((s) => !s.needsNote || hasNote);
+  const skills = allSkills.filter((s) => !s.needsNote || hasNote).slice(0, 4);
   return (
     <div className="ai-empty">
       <AiAvatar size={40} />
@@ -954,20 +987,21 @@ function EmptyState({
 
 function ConnectCard({
   status,
-  isSubscription,
+  subscription,
   providerLabel,
   onRecheck,
   onOpenSettings,
 }: {
   status: { detail?: string } | null;
-  isSubscription: boolean;
+  subscription: "claude" | "chatgpt" | null;
   providerLabel: string;
   onRecheck: () => void;
   onOpenSettings: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const command = subscription === "chatgpt" ? "codex" : "claude";
   const copy = (): void => {
-    void navigator.clipboard.writeText("claude").then(() => {
+    void navigator.clipboard.writeText(command).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
@@ -975,7 +1009,7 @@ function ConnectCard({
 
   // Non-subscription providers (API key / local model) are configured in
   // Settings, so point there instead of the terminal login flow.
-  if (!isSubscription) {
+  if (!subscription) {
     return (
       <div className="ai-connect">
         <AiAvatar size={40} />
@@ -1000,26 +1034,49 @@ function ConnectCard({
   return (
     <div className="ai-connect">
       <AiAvatar size={40} />
-      <div className="ai-connect-title">Connect your Claude account</div>
+      <div className="ai-connect-title">
+        {subscription === "chatgpt" ? "Connect your ChatGPT account" : "Connect your Claude account"}
+      </div>
       <p className="ai-connect-text">
-        KestraVault runs on your <strong>Claude Pro/Max subscription</strong> — no API key needed. It
-        reuses the same login as Claude Code.
+        {subscription === "chatgpt" ? (
+          <>
+            KestraVault runs on your <strong>ChatGPT Plus/Pro subscription</strong> — no API key
+            needed. It reuses the same login as the Codex CLI.
+          </>
+        ) : (
+          <>
+            KestraVault runs on your <strong>Claude Pro/Max subscription</strong> — no API key
+            needed. It reuses the same login as Claude Code.
+          </>
+        )}
       </p>
-      <ol className="ai-connect-steps">
-        <li>
-          Open a Terminal and run <code>claude</code>
-        </li>
-        <li>
-          Type <code>/login</code> and choose <em>“Claude account with subscription”</em>
-        </li>
-        <li>Come back here and re-check the connection</li>
-      </ol>
+      {subscription === "chatgpt" ? (
+        <ol className="ai-connect-steps">
+          <li>
+            Install the Codex CLI: <code>npm install -g @openai/codex</code>
+          </li>
+          <li>
+            Run <code>codex</code> and choose <em>“Sign in with ChatGPT”</em>
+          </li>
+          <li>Come back here and re-check the connection</li>
+        </ol>
+      ) : (
+        <ol className="ai-connect-steps">
+          <li>
+            Open a Terminal and run <code>claude</code>
+          </li>
+          <li>
+            Type <code>/login</code> and choose <em>“Claude account with subscription”</em>
+          </li>
+          <li>Come back here and re-check the connection</li>
+        </ol>
+      )}
       <div className="ai-connect-actions">
         <button className="ai-btn-primary" onClick={onRecheck}>
           Re-check connection
         </button>
         <button className="ai-btn-ghost" onClick={copy}>
-          {copied ? "Copied!" : "Copy “claude”"}
+          {copied ? "Copied!" : `Copy “${command}”`}
         </button>
       </div>
       <button className="ai-connect-link" onClick={onOpenSettings}>

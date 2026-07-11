@@ -1,18 +1,16 @@
-// The "brain" of a vault: the onboarding profile plus the generated system
-// files that make the AI a disciplined wiki maintainer instead of a generic
-// chatbot (Karpathy's "schema" layer — see plan/data-model.md).
+// The "brain" of a vault: the onboarding profile plus the AI guide it generates.
 //
 // Onboarding collects a BrainProfile; this module turns it into:
-//   .kestravault/instructions.md  — the master schema the AI reads on every run
+//   .kestravault/instructions.md  — the AI guide: purpose, working rules, and the
+//                                   vault map (an index the AI keeps current so it
+//                                   can navigate without scanning every file)
 //   .kestravault/config.json      — the profile + onboarding state
-//   AGENTS.md / CLAUDE.md     — thin stubs so external agents (Codex/ChatGPT,
-//                               Claude Code) opened *in the vault folder* follow
-//                               the same rules as the built-in assistant
-//   folder scaffold + index.md / log.md when missing
+//   the folder scaffold the user picked
 //
-// Everything is a plain markdown/JSON file the user can read and edit — the
-// template output is the fallback, and an AI pass may rewrite instructions.md
-// into something more personal (see enhanceInstructionsPrompt).
+// There is no imposed structure: the folders, the filing rules, and the map all
+// come from the user's answers (or their own edits — the guide is plain markdown,
+// editable in Settings → AI guide). The template output is the fallback; an AI
+// pass may rewrite it into something more personal (see enhancePrompt).
 
 export type BrainPurpose = "research" | "personal" | "reading" | "work" | "mixed";
 export type BrainStyle = "concise" | "detailed";
@@ -28,8 +26,8 @@ export interface BrainProfile {
   /** Preferred answer language; "" = match the language of the notes. */
   language: string;
   ingestMode: IngestMode;
-  /** wiki/ subfolders to scaffold (controlled page categories). */
-  categories: string[];
+  /** Top-level folders to scaffold — the user's structure, not a preset one. */
+  folders: string[];
 }
 
 export interface BrainConfig {
@@ -45,54 +43,57 @@ export interface PurposeOption {
   id: BrainPurpose;
   label: string;
   description: string;
-  /** Default wiki categories for this purpose. */
-  categories: string[];
+  /** Default folder suggestions for this purpose (freely editable). */
+  folders: string[];
 }
 
 export const PURPOSES: PurposeOption[] = [
   {
     id: "research",
     label: "Research a topic",
-    description: "Papers, articles and reports on a subject, building an evolving thesis.",
-    categories: ["concepts", "entities", "topics", "sources"],
+    description: "Papers, articles and reports on a subject, building an evolving picture.",
+    folders: ["research", "reading", "notes", "archive"],
   },
   {
     id: "personal",
     label: "Personal knowledge",
     description: "Goals, health, journal entries, articles. A structured picture of your life.",
-    categories: ["topics", "people", "sources"],
+    folders: ["journal", "people", "notes", "archive"],
   },
   {
     id: "reading",
     label: "Reading companion",
     description: "Books and long reads. Track characters, themes and threads as you go.",
-    categories: ["books", "characters", "themes", "sources"],
+    folders: ["reading", "notes", "ideas"],
   },
   {
     id: "work",
     label: "Work & projects",
     description: "Meetings, documents, decisions and the people/projects behind them.",
-    categories: ["projects", "people", "concepts", "sources"],
+    folders: ["projects", "people", "notes", "archive"],
   },
   {
     id: "mixed",
     label: "A bit of everything",
     description: "A general second brain. The structure evolves with what you add.",
-    categories: ["concepts", "entities", "topics", "sources"],
+    folders: ["notes", "projects", "ideas", "archive"],
   },
 ];
 
-export const CATEGORY_CHOICES = [
-  "concepts",
-  "entities",
-  "topics",
-  "sources",
-  "people",
-  "projects",
-  "books",
-  "characters",
-  "themes",
-];
+/** What each suggested folder is for — folds into the guide's vault map. */
+export const FOLDER_INFO: Record<string, string> = {
+  notes: "quick notes and anything not yet categorized",
+  projects: "one note or subfolder per active project",
+  people: "one note per person — who they are, context, threads",
+  journal: "dated entries — days, weeks, reflections",
+  reading: "books, articles, and highlights",
+  research: "papers, findings, and open questions",
+  resources: "reference material worth keeping",
+  ideas: "sparks, drafts, and someday/maybe",
+  archive: "finished or inactive material — moved here instead of deleted",
+};
+
+export const FOLDER_CHOICES = Object.keys(FOLDER_INFO);
 
 export const LANGUAGE_CHOICES = ["", "English", "Spanish", "French", "German", "Portuguese"];
 
@@ -108,7 +109,7 @@ export function defaultProfile(): BrainProfile {
     style: "concise",
     language: "",
     ingestMode: "guided",
-    categories: purposeOf("mixed").categories,
+    folders: purposeOf("mixed").folders,
   };
 }
 
@@ -116,183 +117,79 @@ export function defaultProfile(): BrainProfile {
 
 export const INSTRUCTIONS_PATH = ".kestravault/instructions.md";
 export const BRAIN_CONFIG_PATH = ".kestravault/config.json";
+export const SKILLS_PATH = ".kestravault/skills.json";
 
-/** Folders the brain scaffold creates (vault-relative). */
+/** Folders the setup creates (vault-relative) — exactly what the user picked. */
 export function scaffoldDirs(profile: BrainProfile): string[] {
-  const cats = profile.categories.length ? profile.categories : ["concepts", "sources"];
-  return ["sources", "sources/assets", ...cats.map((c) => `wiki/${c}`), "notes"];
+  return profile.folders.length ? [...profile.folders] : ["notes"];
 }
 
 // ── Template builders ────────────────────────────────────────────────────────
 
-const today = (): string => new Date().toISOString().slice(0, 10);
-
 function styleLine(profile: BrainProfile): string {
   const voice =
     profile.style === "concise"
-      ? "Write tightly: short paragraphs, atomic bullets, no filler. Prefer a bullet over a sentence when both work."
+      ? "Write tightly: short paragraphs, atomic bullets, no filler."
       : "Write in clear, well-developed prose. Explain reasoning and context, not just conclusions.";
   const lang = profile.language
-    ? `Write wiki pages and answers in ${profile.language}.`
+    ? `Write answers and notes in ${profile.language}.`
     : "Match the language the user writes their notes in.";
   return `${voice} ${lang}`;
 }
 
-function ingestModeLines(profile: BrainProfile): string {
+function filingLine(profile: BrainProfile): string {
   return profile.ingestMode === "guided"
-    ? [
-        "- **Guided mode:** before filing, give the user a short digest of the source's key takeaways",
-        "  and what you plan to update; incorporate their emphasis. Stay conversational — the user",
-        "  wants to be involved in what gets filed.",
-      ].join("\n")
-    : [
-        "- **Auto mode:** file sources directly without waiting for discussion. Summarize what you",
-        "  changed at the end so the user can review the change feed.",
-      ].join("\n");
+    ? "Before reorganizing or filing notes, tell the user what you plan to change and incorporate their emphasis."
+    : "File and organize notes directly, then summarize what changed so the user can review.";
 }
 
-/** The master schema written to `.kestravault/instructions.md`. */
+function folderLines(profile: BrainProfile): string {
+  const folders = profile.folders.length ? profile.folders : ["notes"];
+  return folders
+    .map((f) => `- \`${f}/\` — ${FOLDER_INFO[f] ?? "(describe what belongs here)"}`)
+    .join("\n");
+}
+
+/** The AI guide written to `.kestravault/instructions.md`. Short on purpose:
+ *  the AI reads it in full before every operation, so every line must earn
+ *  its place — and the Vault map is what saves it from scanning every file. */
 export function buildInstructions(profile: BrainProfile, vaultName: string): string {
   const purpose = purposeOf(profile.purpose);
-  const cats = profile.categories.length ? profile.categories : purpose.categories;
-  const aboutBlock = [
-    profile.about.trim() ? profile.about.trim() : "_(not provided yet)_",
-    profile.topics.trim() ? `\nTopics they plan to feed this brain: ${profile.topics.trim()}.` : "",
-  ].join("");
+  const about = profile.about.trim() ? profile.about.trim() : "_(not provided yet)_";
+  const topics = profile.topics.trim() ? ` Focus areas: ${profile.topics.trim()}.` : "";
 
-  return `# ${vaultName} — Brain instructions
+  return `# ${vaultName} — AI guide
 
-_This file is the schema for the AI that maintains this vault. The AI reads it at the start of
-every operation and follows it exactly. Only the human edits this file — the AI may **propose**
-changes (see “Improving these instructions”) but never rewrites it itself._
+_The AI reads this file first, before every chat and vault operation. Keep it short and
+current. You can edit it anytime (Settings → AI guide); the AI keeps the **Vault map**
+section accurate so it can find anything without scanning every file._
 
 ## Purpose
-${purpose.label}: ${purpose.description}
-${profile.topics.trim() ? `Focus areas: ${profile.topics.trim()}.` : ""}
+${purpose.label}: ${purpose.description}${topics}
 
 ## About the user
-${aboutBlock}
+${about}
 
-## Layout & zones
-| Zone | Owner | AI access |
-|---|---|---|
-| \`sources/\` | human drops raw material | **read-only — never modify or delete** |
-| \`wiki/\` | AI-maintained knowledge | read/write — your primary work area |
-| \`notes/\` | human's own notes | read-only unless explicitly asked to edit |
-| \`index.md\` | catalog of the wiki | read/write — keep current on every change |
-| \`log.md\` | append-only operation log | append one entry per operation |
-| \`.kestravault/\` | app metadata & this file | **read-only** |
+## How to work
+- Ground answers in the notes in this vault and cite note titles; if the notes don't cover it, say so.
+- ${styleLine(profile)}
+- ${filingLine(profile)}
+- Link related notes with \`[[wikilinks]]\`, using note titles.
+- Prefer moving or renaming notes over deleting; never discard the user's words.
+- Use the Vault map below to navigate. After any change that adds, moves, renames, or
+  reorganizes notes, update the Vault map so it stays true.
 
-Wiki pages live under: ${cats.map((c) => `\`wiki/${c}/\``).join(", ")}.
+## Vault map
+_The index of this vault: each folder, what belongs in it, and the notes worth knowing
+about. One line per entry — enough to find everything, short enough to read every time._
 
-## Page conventions
-- One concept/entity per page; keep pages small and atomic.
-- Filenames are readable slugs; new sources are \`sources/s-YYYY-MM-DD-<slug>.md\`.
-- Cross-reference with \`[[wikilinks]]\` inline in prose, using the page title (never an id).
-- Every wiki page starts with YAML frontmatter: \`title\`, \`type\`, one-line \`summary\`,
-  \`aliases\` (natural alternative names), \`tags\` (see vocabulary below), \`sources\` (provenance),
-  \`created\`/\`updated\` dates.
-- Page shape: \`# Title\` → one-line summary → \`## Key facts\` (atomic bullets) →
-  \`## Details\` (prose with [[links]]) → \`## Sources\`.
+${folderLines(profile)}
 
-## Workflows
-### Ingest (file a source into the wiki)
-1. Read the source fully. Read \`index.md\` to see what already exists.
-${ingestModeLines(profile)}
-3. Write/refresh the per-source summary page in \`wiki/sources/\` (or the closest category).
-4. Update every wiki page the source touches: add facts, cross-references, and note where the
-   new material **contradicts or supersedes** existing claims (say so explicitly on the page).
-5. Update \`index.md\` (one line per page: link, summary, tags).
-6. Append to \`log.md\`: \`## [YYYY-MM-DD] ingest | <source title>\` plus a short list of pages touched.
-
-### Query (answer from the wiki)
-1. Read \`index.md\` first to find candidate pages; open only what's relevant.
-2. Ground answers in wiki/source pages and cite page titles. If the wiki doesn't cover it, say so.
-3. When an answer produces something durable (a comparison, an analysis, a connection), offer to
-   file it back into the wiki as a new page.
-
-### Lint (health check)
-1. Scan for: contradictions between pages, stale claims superseded by newer sources, orphan pages
-   with no inbound links, concepts mentioned often but lacking a page, missing cross-references,
-   index entries that drifted from the pages.
-2. Fix the mechanical problems directly (index drift, missing links, orphan wiring).
-3. Report the judgment calls (contradictions, gaps, suggested new sources or questions) to the user.
-4. Append a \`lint\` entry to \`log.md\`.
-
-## Style
-${styleLine(profile)}
-
-## Tag vocabulary
-Keep tags to a small controlled set so retrieval doesn't fragment. Current set (grow deliberately):
-_(none yet — add tags here as they emerge)_
+_(No notes yet — extend this map as content arrives.)_
 
 ## Learned preferences
-_The user's corrections and preferences accumulate here over time so every future run improves.
-The AI may **suggest** additions in its summaries; the human adds them._
+_Corrections and preferences that should shape future work. Keep entries short._
 - (none yet)
-
-## Improving these instructions
-After an ingest or lint, if you noticed a way this schema could work better for this user
-(a missing category, a recurring correction, a better page shape), **propose it in your summary**.
-Never edit this file yourself.
-`;
-}
-
-/** AGENTS.md — makes the vault work with Codex/ChatGPT-style agents (and any
- *  tool that follows the AGENTS.md convention) opened directly in the folder. */
-export function buildAgentsMd(vaultName: string): string {
-  return `# AGENTS.md — ${vaultName}
-
-This folder is an **KestraVault vault**: a personal knowledge base where an AI maintains an
-interlinked markdown wiki from raw sources (the "LLM Wiki" pattern).
-
-**Read \`.kestravault/instructions.md\` first and follow it exactly** — it is the single source of
-truth for this vault's structure, workflows (ingest / query / lint), and style.
-
-Non-negotiable rules, whatever agent you are:
-- \`sources/\` is immutable — never modify or delete anything in it.
-- \`notes/\` belongs to the human — read it, but only edit when explicitly asked.
-- \`wiki/\`, \`index.md\` and \`log.md\` are yours to maintain; keep them consistent.
-- Never rewrite \`.kestravault/\` (including \`instructions.md\`) — propose changes instead.
-`;
-}
-
-/** CLAUDE.md — points Claude Code at AGENTS.md so all tools share one ruleset. */
-export function buildClaudeMd(): string {
-  return `# CLAUDE.md
-
-This vault uses **\`AGENTS.md\`** as the shared ruleset for every AI agent, so Claude Code,
-Codex, and others stay in sync. Read \`./AGENTS.md\`, then \`.kestravault/instructions.md\`.
-`;
-}
-
-export function buildIndexMd(vaultName: string): string {
-  return `---
-title: Index
-type: index
----
-
-# Index
-
-The catalog of everything in **${vaultName}** — maintained by the AI, one line per wiki page.
-Drop material into \`sources/\` and run **Ingest** to grow it.
-
-_(empty — nothing ingested yet)_
-`;
-}
-
-export function buildLogMd(): string {
-  return `---
-title: Log
-type: log
----
-
-# Log
-
-Append-only record of every operation on this vault, newest last.
-
-## [${today()}] setup | Brain created
-Vault scaffolded from onboarding; instructions written to \`.kestravault/instructions.md\`.
 `;
 }
 
@@ -301,15 +198,15 @@ Vault scaffolded from onboarding; instructions written to \`.kestravault/instruc
 /** System prompt for the enhancement pass that rewrites the template. */
 export function enhanceSystem(): string {
   return [
-    "You are configuring a personal AI-maintained knowledge base (an 'LLM wiki').",
-    "You will receive the user's onboarding answers and a template instruction file.",
-    "Rewrite the instruction file so it is genuinely personalized: fold the user's purpose,",
-    "topics and background into the Purpose/About sections, tailor the workflows and page",
-    "categories to their domain, and seed a starter tag vocabulary from their topics.",
-    "Keep every section heading and every permission rule from the template — the zone table",
-    "and the 'never edit sources/ or .kestravault/' rules must survive verbatim in meaning.",
-    "Keep it under 150 lines. Return ONLY the final markdown file content —",
-    "no preamble, no explanation, no code fences.",
+    "You are configuring the guide file for a personal, AI-assisted notes vault.",
+    "You will receive the user's onboarding answers and a template guide file.",
+    "Rewrite the guide so it is genuinely personalized: fold the user's purpose, topics",
+    "and background into the Purpose/About sections, tailor the working rules and the",
+    "folder structure in the Vault map to their domain (you may rename, add, or drop",
+    "folders if the answers suggest a better structure), and keep every section heading",
+    "from the template. The Vault map must list each folder with a one-line description.",
+    "Keep the file under 80 lines — the AI reads it in full on every operation.",
+    "Return ONLY the final markdown file content — no preamble, no explanation, no code fences.",
   ].join(" ");
 }
 
@@ -322,16 +219,16 @@ export function enhancePrompt(profile: BrainProfile, template: string): string {
     `About the user: ${profile.about.trim() || "(none given)"}`,
     `Writing style: ${profile.style === "concise" ? "concise bullets" : "detailed prose"}`,
     `Language: ${profile.language || "match the notes"}`,
-    `Ingest mode: ${profile.ingestMode === "guided" ? "discuss before filing" : "file automatically"}`,
-    `Wiki categories: ${profile.categories.join(", ")}`,
+    `Filing mode: ${profile.ingestMode === "guided" ? "discuss before changing things" : "organize automatically"}`,
+    `Folders: ${profile.folders.join(", ")}`,
   ].join("\n");
   return `The user's onboarding answers:\n${answers}\n\nThe template to personalize:\n"""\n${template}\n"""`;
 }
 
-/** Cheap sanity check that an AI enhancement is a usable instructions file. */
+/** Cheap sanity check that an AI enhancement is a usable guide file. */
 export function looksLikeInstructions(text: string): boolean {
   const t = text.trim();
-  return t.startsWith("#") && /sources\//.test(t) && /wiki\//.test(t) && t.length > 400;
+  return t.startsWith("#") && /\n## /.test(t) && t.length > 300;
 }
 
 // ── Chat personalization ─────────────────────────────────────────────────────
@@ -344,8 +241,8 @@ export function brainContext(instructions: string): string {
   if (!text) return "";
   if (text.length > BRAIN_CONTEXT_LIMIT) text = text.slice(0, BRAIN_CONTEXT_LIMIT) + "\n…";
   return (
-    `\n\nThis vault has personalized brain instructions (its schema). Follow them — especially` +
-    ` the zone permissions, style, and workflows — in everything you do here:\n\n"""\n${text}\n"""`
+    `\n\nThis vault has a personalized AI guide (its purpose, working rules, and the map` +
+    ` of its structure). Follow it in everything you do here:\n\n"""\n${text}\n"""`
   );
 }
 
@@ -354,14 +251,27 @@ export function brainContext(instructions: string): string {
 export async function readBrainConfig(): Promise<BrainConfig | null> {
   try {
     const raw = await window.api.vault.read(BRAIN_CONFIG_PATH);
-    const parsed = JSON.parse(raw) as Partial<BrainConfig>;
+    const parsed = JSON.parse(raw) as Partial<BrainConfig> & {
+      profile?: Partial<BrainProfile> & { categories?: string[] };
+    };
     if (parsed.onboarding === "done" || parsed.onboarding === "skipped") {
+      // Older configs stored wiki categories; carry them over as folders so a
+      // wizard re-run prefills something sensible.
+      let profile: BrainProfile | undefined;
+      if (parsed.profile) {
+        const p = parsed.profile;
+        profile = {
+          ...defaultProfile(),
+          ...p,
+          folders: p.folders ?? p.categories ?? defaultProfile().folders,
+        };
+      }
       return {
         version: 1,
         onboarding: parsed.onboarding,
         aiPersonalized: parsed.aiPersonalized ?? false,
         completedAt: parsed.completedAt ?? "",
-        profile: parsed.profile,
+        profile,
       };
     }
     return null;
@@ -395,11 +305,10 @@ function flattenTree(nodes: { path: string; kind: string; children?: unknown }[]
 }
 
 /**
- * Lay the brain down onto the current vault: scaffold folders, write the
- * instruction files, and create index/log when missing. Non-destructive by
- * design — existing index.md / log.md / AGENTS.md / CLAUDE.md are kept (they
- * may be the user's own), while instructions.md is always (re)written because
- * onboarding is the authoritative editor for it.
+ * Lay the brain down onto the current vault: scaffold the chosen folders and
+ * write the AI guide. Non-destructive by design — existing folders and notes
+ * are kept, while instructions.md is always (re)written because onboarding is
+ * the authoritative editor for it.
  */
 export async function applyBrainSetup(
   profile: BrainProfile,
@@ -410,7 +319,7 @@ export async function applyBrainSetup(
   const kept: string[] = [];
   const existing = flattenTree(await window.api.vault.tree());
 
-  // Folders: createDir auto-suffixes on collision ("sources 2"), so only create
+  // Folders: createDir auto-suffixes on collision ("notes 2"), so only create
   // the ones that don't exist yet.
   for (const dir of scaffoldDirs(profile)) {
     if (!existing.has(dir)) await window.api.vault.createDir(dir);
@@ -422,21 +331,7 @@ export async function applyBrainSetup(
       : buildInstructions(profile, vaultName);
   await window.api.vault.write(INSTRUCTIONS_PATH, instructions);
   wrote.push(INSTRUCTIONS_PATH);
-
-  const writeIfMissing = async (path: string, content: string): Promise<void> => {
-    if (existing.has(path)) {
-      kept.push(path);
-      return;
-    }
-    await window.api.vault.write(path, content);
-    wrote.push(path);
-  };
-  // The tree hides root dotfiles but AGENTS/CLAUDE/index/log are visible files;
-  // AGENTS.md and CLAUDE.md may exist in an opened folder (someone's own setup).
-  await writeIfMissing("AGENTS.md", buildAgentsMd(vaultName));
-  await writeIfMissing("CLAUDE.md", buildClaudeMd());
-  await writeIfMissing("index.md", buildIndexMd(vaultName));
-  await writeIfMissing("log.md", buildLogMd());
+  void kept;
 
   await writeBrainConfig({
     version: 1,

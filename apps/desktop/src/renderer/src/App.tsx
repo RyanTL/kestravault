@@ -216,7 +216,7 @@ export default function App() {
     setAiSeed({ q: query, token: Date.now() });
   }
 
-  // Run a vault skill (Ingest / Lint) from the editor's "/" menu: reveal the AI
+  // Run a vault skill from the editor's "/" menu: reveal the AI
   // panel and hand it the request, which it runs against the active note.
   function askSkill(id: string): void {
     setShowAi(true);
@@ -468,7 +468,7 @@ export default function App() {
       },
       {
         id: "brain-setup",
-        title: "Set up my brain (onboarding)…",
+        title: "Set up my vault (onboarding)…",
         run: () => void openBrainSetup(),
       },
       { id: "reveal-vault", title: "Reveal vault in Finder", run: () => void window.api.vault.reveal() },
@@ -709,15 +709,23 @@ export default function App() {
             full={aiFull}
             onToggleFull={() => setAiFull((v) => !v)}
             model={settings.model}
-            models={settings.preset.models}
+            models={settings.models}
             onModelChange={(id) => settings.setProviderField("model", id)}
             effort={settings.effort}
             onEffortChange={settings.setEffort}
             supportsEffort={settings.supportsEffort}
             providerLabel={settings.preset.label}
-            isSubscription={settings.preset.kind === "subscription"}
+            subscription={
+              settings.preset.kind === "subscription"
+                ? "claude"
+                : settings.preset.kind === "openai-sub"
+                  ? "chatgpt"
+                  : null
+            }
             aiIsLocal={aiIsLocal}
-            agentCapable={settings.preset.kind !== "openai"}
+            agentCapable={
+              settings.preset.kind === "subscription" || settings.preset.kind === "anthropic"
+            }
             preset={settings.preset}
             runMode={settings.runMode}
             onRunModeChange={settings.setRunMode}
@@ -764,6 +772,10 @@ export default function App() {
           onReveal={() => void window.api.vault.reveal()}
           onClose={() => setSettingsTab(null)}
           onBrainSetup={() => void openBrainSetup()}
+          onOptimizeVault={() => {
+            setSettingsTab(null);
+            askSkill("organize");
+          }}
         />
       ) : null}
       {onboarding ? (
@@ -774,11 +786,10 @@ export default function App() {
           providerLabel={settings.preset.label}
           initialProfile={onboarding.profile}
           onOpenSettings={() => openSettings("ai")}
-          onClose={(result) => {
+          onClose={() => {
+            // The watcher refreshes the tree, so the new folders are already
+            // visible when the wizard closes.
             setOnboarding(null);
-            // Land the user on the freshly written catalog so the new
-            // structure is immediately visible (the watcher refreshes the tree).
-            if (result === "done") openFile("index.md");
           }}
         />
       ) : null}

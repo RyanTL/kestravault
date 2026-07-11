@@ -1,16 +1,23 @@
 import type { BrowserWindow } from "electron";
+import { spawn } from "node:child_process";
+import { promises as fs } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { query, type Options, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
 import { vaultRoot } from "./vault.js";
 import { getSecret, keyFingerprint } from "./secrets.js";
 import { resolveClaudeExecutable } from "./claudeBinary.js";
+import { codexLoggedIn, resetCodexCache, resolveCodexExecutable } from "./codexBinary.js";
 
 // ── KestraVault AI bridge ────────────────────────────────────────────────────────
 // KestraVault is open source and "bring your own model": the AI features run on
-// whatever provider the user configures in Settings. We support three wire
+// whatever provider the user configures in Settings. We support four wire
 // "kinds", which between them cover the popular options:
 //
 //   • subscription — the Claude Agent SDK, reusing the user's Claude.ai
 //     (Pro/Max) login over OAuth, exactly like Claude Code. No API key.
+//   • openai-sub   — the OpenAI Codex CLI, reusing the user's ChatGPT
+//     (Plus/Pro) login. No API key either — we shell out to `codex exec`.
 //   • anthropic    — the Anthropic Messages API with the user's own key.
 //   • openai       — any OpenAI-compatible /chat/completions endpoint. One code
 //     path serves OpenAI, OpenRouter, Together, a local Ollama or LM Studio,
@@ -35,7 +42,7 @@ export interface ChatMessage {
 // Note there is no `apiKey` here on purpose: keys never cross the IPC boundary.
 // The renderer passes only the provider *id*, and the main process resolves the
 // key from encrypted storage (secrets.ts) at the moment of the request.
-export type AiProviderKind = "subscription" | "anthropic" | "openai";
+export type AiProviderKind = "subscription" | "openai-sub" | "anthropic" | "openai";
 export interface AiProviderConfig {
   kind: AiProviderKind;
   /** Which provider preset — used to look up the stored key in secrets.ts. */
@@ -211,6 +218,113 @@ async function runSubscription(
   }
 }
 
+// ── ChatGPT subscription (OpenAI Codex CLI) ──────────────────────────────────
+
+// One JSONL line from `codex exec --json`. We only care about assistant text
+// and errors; every other event type is progress noise we ignore. Two shapes
+// exist across CLI versions, so both are handled.
+function codexTextFromEvent(json: unknown): { text?: string; error?: string } {
+  const j = json as {
+    type?: string;
+    message?: string;
+    error?: { message?: string };
+    item?: { type?: string; item_type?: string; text?: string };
+    msg?: { type?: string; message?: string };
+  };
+  if (j.type === "error") return { error: j.message || j.error?.message || "Codex error" };
+  if (j.type === "turn.failed") return { error: j.error?.message || "Codex turn failed" };
+  if (j.type === "item.completed" && j.item) {
+    const kind = j.item.type ?? j.item.item_type;
+    if (kind === "agent_message" && typeof j.item.text === "string") return { text: j.item.text };
+  }
+  // Legacy event envelope ({"msg": {"type": "agent_message", ...}}).
+  if (j.msg?.type === "agent_message" && typeof j.msg.message === "string") {
+    return { text: j.msg.message };
+  }
+  return {};
+}
+
+// Run one turn through the Codex CLI, authenticated by the user's ChatGPT
+// login (`codex login`). Codex has no separate system-prompt flag, so the
+// instructions are folded into the prompt. The child runs read-only in an
+// empty temp directory: the renderer curates exactly which notes the model
+// sees, and nothing on disk is readable or writable by the CLI's tools.
+async function runCodex(
+  req: AiSendRequest,
+  controller: AbortController,
+  onDelta: (t: string) => void,
+): Promise<void> {
+  const exe = resolveCodexExecutable();
+  if (!exe) throw new Error("codex_not_installed");
+
+  const body = composePrompt(req.messages);
+  const prompt = req.system ? `Instructions for this conversation:\n${req.system}\n\n${body}` : body;
+  const cwd = await fs.mkdtemp(join(tmpdir(), "kestravault-codex-"));
+
+  const args = ["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only"];
+  if (req.model) args.push("--model", req.model);
+
+  try {
+    await new Promise<void>((resolvePromise, reject) => {
+      const child = spawn(exe, args, { cwd, stdio: ["pipe", "pipe", "pipe"] });
+      let sawText = false;
+      let stderr = "";
+      let buf = "";
+
+      const onAbort = (): void => {
+        child.kill("SIGTERM");
+      };
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+
+      const handleLine = (line: string): void => {
+        const trimmed = line.trim();
+        if (!trimmed) return;
+        let json: unknown;
+        try {
+          json = JSON.parse(trimmed);
+        } catch {
+          return; // non-JSON progress line
+        }
+        const { text, error } = codexTextFromEvent(json);
+        if (error) {
+          child.kill("SIGTERM");
+          reject(new Error(error));
+          return;
+        }
+        if (text) {
+          sawText = true;
+          onDelta(text);
+        }
+      };
+
+      child.stdout.on("data", (d: Buffer) => {
+        buf += d.toString("utf8");
+        let nl: number;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          handleLine(buf.slice(0, nl));
+          buf = buf.slice(nl + 1);
+        }
+      });
+      child.stderr.on("data", (d: Buffer) => {
+        stderr += d.toString("utf8");
+      });
+      child.on("error", (err) => reject(err));
+      child.on("close", (code) => {
+        controller.signal.removeEventListener("abort", onAbort);
+        if (buf.trim()) handleLine(buf);
+        if (controller.signal.aborted) reject(new Error("aborted"));
+        else if (code === 0 || sawText) resolvePromise();
+        else reject(new Error(stderr.trim() || `codex exited with code ${code}`));
+      });
+
+      child.stdin.write(prompt);
+      child.stdin.end();
+    });
+  } finally {
+    await fs.rm(cwd, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 // ── HTTP providers (Anthropic API + OpenAI-compatible) ───────────────────────
 
 // Read a fetch SSE body line by line. `extract` turns one parsed `data:` JSON
@@ -360,7 +474,7 @@ async function runAnthropic(
 export function classifyError(message: string): AiErrorKind {
   const m = message.toLowerCase();
   if (
-    /\b(401|403)\b|not logged in|unauthor|authentication|invalid.*api key|incorrect api key|no api key|missing.*key|please run \/login|oauth/.test(
+    /\b(401|403)\b|not logged in|unauthor|authentication|invalid.*api key|incorrect api key|no api key|missing.*key|please run \/login|oauth|codex_not_installed|codex login/.test(
       m,
     )
   ) {
@@ -378,6 +492,17 @@ export function friendly(kind: AiErrorKind, raw: string, provider: AiProviderCon
     if (provider.kind === "subscription") {
       return "Not connected to your Claude account. Open a terminal, run `claude`, then `/login` and choose “Claude account with subscription”.";
     }
+    if (provider.kind === "openai-sub") {
+      return /codex_not_installed/.test(raw)
+        ? "The Codex CLI isn’t installed. Install it (`npm install -g @openai/codex`), run `codex`, and sign in with your ChatGPT account."
+        : "Not connected to your ChatGPT account. Open a terminal, run `codex`, and sign in with ChatGPT.";
+    }
+  }
+  if (provider.kind === "openai-sub" && /newer version of codex/i.test(raw)) {
+    return (
+      "Your Codex CLI is too old for this model. Update it (`npm install -g @openai/codex@latest`) " +
+      "and try again — or pick “Default (Codex)” in the model picker to use whatever your CLI supports."
+    );
     return "The provider rejected the request — check your API key and base URL in Settings → AI model.";
   }
   if (kind === "rate_limit") {
@@ -414,6 +539,8 @@ export async function runAiRequest(win: BrowserWindow, req: AiSendRequest): Prom
       await runAnthropic(req, provider, controller, onDelta);
     } else if (provider.kind === "openai") {
       await runOpenAi(req, provider, controller, onDelta);
+    } else if (provider.kind === "openai-sub") {
+      await runCodex(req, controller, onDelta);
     } else {
       await runSubscription(req, controller, onDelta);
     }
@@ -501,6 +628,29 @@ export async function aiStatus(provider?: AiProviderConfig, force = false): Prom
   const cached = statusCache.get(sig);
   if (cached && !force) return cached;
 
+  // ChatGPT subscription: no network probe needed — the Codex CLI knows
+  // whether it holds a (self-refreshing) ChatGPT login.
+  if (p.kind === "openai-sub") {
+    if (force) resetCodexCache();
+    const exe = resolveCodexExecutable();
+    const status: AiStatus = !exe
+      ? {
+          connected: false,
+          kind: "auth",
+          detail:
+            "The Codex CLI isn’t installed. Install it (`npm install -g @openai/codex`), run `codex`, and sign in with ChatGPT.",
+        }
+      : codexLoggedIn(exe)
+        ? { connected: true }
+        : {
+            connected: false,
+            kind: "auth",
+            detail: "Open a terminal, run `codex`, and sign in with your ChatGPT account.",
+          };
+    statusCache.set(sig, status);
+    return status;
+  }
+
   // A provider that needs a key but has none is plainly "not connected" — no
   // point spending a network round-trip to learn that.
   if (
@@ -537,4 +687,72 @@ export async function aiStatus(provider?: AiProviderConfig, force = false): Prom
 
 export function resetAiStatus(): void {
   statusCache.clear();
+  modelCache.clear();
+}
+
+// ── Live model discovery ─────────────────────────────────────────────────────
+// New models ship constantly; instead of waiting for an app release, we ask
+// the provider itself. Every OpenAI-compatible endpoint (OpenAI, OpenRouter,
+// Ollama, LM Studio, custom) exposes GET /models, and the Anthropic API has
+// GET /v1/models — so the picker always reflects what the account can use.
+// Subscription providers (Claude login, ChatGPT login) keep their curated
+// aliases in the renderer; the CLIs resolve those to the newest models.
+
+export interface AiModelInfo {
+  id: string;
+  label: string;
+}
+
+const MODEL_CACHE_TTL = 10 * 60 * 1000;
+const modelCache = new Map<string, { at: number; models: AiModelInfo[] }>();
+
+/** Ids that aren't text-chat models on api.openai.com — noise in a chat picker. */
+const OPENAI_NON_CHAT =
+  /embed|whisper|tts|audio|dall-e|image|moderation|realtime|transcribe|babbage|davinci|codex-mini|computer-use/i;
+
+async function fetchModels(p: AiProviderConfig): Promise<AiModelInfo[]> {
+  const key = keyFor(p);
+  if (p.kind === "anthropic") {
+    const base = trimSlash(p.baseUrl || "https://api.anthropic.com");
+    const res = await fetch(`${base}/v1/models?limit=100`, {
+      headers: { "x-api-key": key ?? "", "anthropic-version": "2023-06-01" },
+    });
+    if (!res.ok) throw await httpError(res);
+    const json = (await res.json()) as { data?: { id?: string; display_name?: string }[] };
+    return (json.data ?? [])
+      .filter((m): m is { id: string; display_name?: string } => typeof m.id === "string")
+      .map((m) => ({ id: m.id, label: m.display_name || m.id }));
+  }
+  if (p.kind === "openai") {
+    const base = trimSlash(p.baseUrl || "https://api.openai.com/v1");
+    const res = await fetch(`${base}/models`, {
+      headers: key ? { Authorization: `Bearer ${key}` } : {},
+    });
+    if (!res.ok) throw await httpError(res);
+    const json = (await res.json()) as {
+      data?: { id?: string; name?: string; created?: number }[];
+    };
+    const isOpenAi = /api\.openai\.com/i.test(base);
+    return (json.data ?? [])
+      .filter((m): m is { id: string; name?: string; created?: number } => typeof m.id === "string")
+      .filter((m) => !isOpenAi || !OPENAI_NON_CHAT.test(m.id))
+      .sort((a, b) => (b.created ?? 0) - (a.created ?? 0))
+      .map((m) => ({ id: m.id, label: m.name || m.id }));
+  }
+  return []; // subscription kinds keep their curated aliases
+}
+
+/** List the models the active provider can serve right now (cached ~10 min). */
+export async function listAiModels(provider?: AiProviderConfig): Promise<AiModelInfo[]> {
+  const p = provider ?? { kind: "subscription" };
+  const sig = sigOf(p);
+  const cached = modelCache.get(sig);
+  if (cached && Date.now() - cached.at < MODEL_CACHE_TTL) return cached.models;
+  try {
+    const models = await fetchModels(p);
+    modelCache.set(sig, { at: Date.now(), models });
+    return models;
+  } catch {
+    return cached?.models ?? []; // discovery is best-effort — curated lists remain
+  }
 }

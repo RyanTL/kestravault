@@ -32,7 +32,7 @@ interface EditorGroupProps {
   onCloseTab: (path: string) => void;
   onRegisterView: (view: EditorView | null) => void;
   onMoveTab: (fromPaneId: string, path: string, toPaneId: string, toIndex: number | null) => void;
-  /** Run a vault skill (Ingest / Lint) chosen from the editor's "/" menu. */
+  /** Run a vault skill chosen from the editor's "/" menu. */
   onRunSkill?: (id: string) => void;
 }
 

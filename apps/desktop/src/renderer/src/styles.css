@@ -1605,6 +1605,14 @@ kbd {
   border-color: var(--text-faint);
 }
 
+/* Custom-skill instruction textarea (Settings → AI guide). */
+.skill-prompt {
+  resize: vertical;
+  min-height: 84px;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
 /* ---- Shared-vault Activity (presence + attributed change feed) ---- */
 .activity-presence {
   padding: 0 14px 8px;
@@ -1947,6 +1955,10 @@ kbd {
   flex: 0 0 var(--ai-w, 360px);
   border-left: 1px solid var(--border);
   background: var(--bg-pane);
+  /* Container queries: the composer degrades gracefully as the panel narrows
+     (see the @container rules after the composer styles). */
+  container-type: inline-size;
+  container-name: ai-panel;
 }
 
 /* Full view: chat takes the whole workbench and content is centred for reading. */
@@ -2361,6 +2373,7 @@ kbd {
   align-items: center;
   gap: 4px;
   min-width: 0;
+  flex-wrap: wrap; /* a narrow panel wraps controls instead of clipping them */
 }
 .ai-scope {
   display: inline-flex;
@@ -2387,7 +2400,7 @@ kbd {
   width: 14px;
   height: 14px;
 }
-/* Vault skills (Ingest / Lint): the composer "/" menu + the in-turn status line. */
+/* Vault skills: the composer "/" menu + the in-turn status line. */
 .ai-slash-menu {
   position: absolute;
   bottom: calc(100% + 8px);
@@ -2583,6 +2596,59 @@ kbd {
 .ai-send.is-stop {
   background: var(--text-dim);
   color: var(--bg);
+}
+
+/* Long model ids (live-discovered) must never blow the composer open. */
+.ai-picker-trigger span {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-picker-menu {
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+/* ---- Narrow-panel adjustments (container queries on .ai-panel) ---- */
+/* The panel resizes from 300 to 720px; below ~340px the composer footer gets
+   cramped, so controls shed their chrome progressively instead of clipping. */
+@container ai-panel (max-width: 340px) {
+  .ai-composer {
+    padding: 8px 8px 10px;
+  }
+  .ai-picker-trigger span {
+    max-width: 96px;
+  }
+  .ai-scope {
+    padding: 3px 5px;
+  }
+  .ai-runmode {
+    flex-wrap: wrap;
+  }
+  .ai-head {
+    padding: 6px 6px;
+  }
+}
+@container ai-panel (max-width: 310px) {
+  /* Tightest fit: the scope toggle collapses to its icon; pickers shrink. */
+  .ai-scope {
+    font-size: 0;
+    gap: 0;
+  }
+  .ai-scope svg {
+    width: 15px;
+    height: 15px;
+  }
+  .ai-picker-trigger {
+    padding: 3px 4px;
+  }
+  .ai-picker-trigger span {
+    max-width: 72px;
+  }
+  .ai-composer-foot {
+    gap: 4px;
+  }
 }
 
 /* ---- Connect card ---- */

@@ -30,7 +30,7 @@ export function isRoutable(preset: ProviderPreset): boolean {
   return CLAUDE_TIERS[preset.kind] !== undefined;
 }
 
-/** The model an agent run (Ingest / Lint) should use for a given run mode. */
+/** The model an agent run (a vault skill) should use for a given run mode. */
 export function agentModelFor(preset: ProviderPreset, chatModel: string, mode: RunMode): string {
   return CLAUDE_TIERS[preset.kind]?.[mode] ?? chatModel;
 }

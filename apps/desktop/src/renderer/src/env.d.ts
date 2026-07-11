@@ -37,7 +37,7 @@ export interface AiChatMessage {
   role: AiChatRole;
   content: string;
 }
-export type AiProviderKind = "subscription" | "anthropic" | "openai";
+export type AiProviderKind = "subscription" | "openai-sub" | "anthropic" | "openai";
 export interface AiProviderConfig {
   kind: AiProviderKind;
   /** Which provider preset — the main process resolves the key from this. */
@@ -67,21 +67,25 @@ export interface AiStatus {
 }
 
 // ── Vault agent operations (mirror of main/agentOps.ts) ──
-export type AgentOpKind = "ingest" | "lint";
+export type AgentOpKind = "file" | "tidy" | "organize" | "custom";
 export interface AgentOpRequest {
   requestId: string;
   op: AgentOpKind;
   targetPath?: string;
+  /** The instruction for a `custom` op (a user-defined skill's prompt). */
+  prompt?: string;
   model?: string;
   provider?: AiProviderConfig;
 }
 export interface AgentChangedFile {
   path: string;
-  op: "create" | "update";
+  op: "create" | "update" | "move";
+  /** Previous path when `op` is "move". */
+  from?: string;
 }
 export type AgentOpEvent =
   | { requestId: string; type: "delta"; text: string }
-  | { requestId: string; type: "tool"; action: "read" | "search" | "write"; path?: string }
+  | { requestId: string; type: "tool"; action: "read" | "search" | "write" | "move"; path?: string }
   | { requestId: string; type: "done"; text: string; changed: AgentChangedFile[] }
   | { requestId: string; type: "error"; kind: AiErrorKind; message: string };
 
@@ -90,6 +94,8 @@ interface AiApi {
   cancel(requestId: string): Promise<void>;
   status(provider?: AiProviderConfig, force?: boolean): Promise<AiStatus>;
   resetStatus(): Promise<void>;
+  /** Models the provider can serve right now (live discovery, best-effort). */
+  models(provider?: AiProviderConfig): Promise<{ id: string; label: string }[]>;
   onEvent(cb: (e: AiEvent) => void): () => void;
   agent(req: AgentOpRequest): Promise<void>;
   onAgentEvent(cb: (e: AgentOpEvent) => void): () => void;

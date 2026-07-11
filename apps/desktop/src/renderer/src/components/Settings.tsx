@@ -2,6 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { AiIcon } from "@renderer/components/AiIcons";
 import { Sparkles, Sun, Info, Activity, RefreshCw, Brain } from "lucide-react";
 import { INSTRUCTIONS_PATH } from "@renderer/vault/brain";
+import {
+  readCustomSkills,
+  slugifySkillLabel,
+  writeCustomSkills,
+  type CustomSkill,
+} from "@renderer/vault/skills";
 import type {
   ActivitySummary,
   MemberSummary,
@@ -28,21 +34,20 @@ interface SettingsProps {
   onReveal: () => void;
   onClose: () => void;
   initialTab?: SettingsTab;
-  /** Re-run the onboarding wizard ("Set up my brain"). */
+  /** Re-run the onboarding wizard ("Set up my vault"). */
   onBrainSetup?: () => void;
+  /** Let the AI reorganize the vault (runs the Reorganize skill in the chat). */
+  onOptimizeVault?: () => void;
 }
 
 const TABS: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
   { id: "ai", label: "AI model", icon: <SparkGlyph /> },
-  { id: "brain", label: "Brain", icon: <BrainGlyph /> },
+  { id: "brain", label: "AI guide", icon: <BrainGlyph /> },
   { id: "sync", label: "Sync & sharing", icon: <SyncGlyph /> },
   { id: "appearance", label: "Appearance", icon: <SunGlyph /> },
   { id: "activity", label: "Activity", icon: <ActivityGlyph /> },
   { id: "about", label: "About", icon: <InfoGlyph /> },
 ];
-
-// KestraVault' own inspiration — documented in plan/README.md.
-const INSPIRATION_URL = "https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f";
 
 // Obsidian/Notion-style settings: a category rail on the left, a scrolling
 // content pane on the right. Lives as a modal over the workbench.
@@ -54,6 +59,7 @@ export function Settings({
   onClose,
   initialTab,
   onBrainSetup,
+  onOptimizeVault,
 }: SettingsProps) {
   const [tab, setTab] = useState<SettingsTab>(initialTab ?? "ai");
 
@@ -93,7 +99,11 @@ export function Settings({
           {tab === "ai" ? (
             <AiSettings settings={settings} ai={ai} />
           ) : tab === "brain" ? (
-            <BrainSettings onBrainSetup={onBrainSetup} onClose={onClose} />
+            <BrainSettings
+              onBrainSetup={onBrainSetup}
+              onOptimizeVault={onOptimizeVault}
+              onClose={onClose}
+            />
           ) : tab === "sync" ? (
             <SyncSettings vaultName={vaultName} />
           ) : tab === "appearance" ? (
@@ -118,6 +128,7 @@ function AiSettings({ settings, ai }: { settings: SettingsController; ai: AiCont
     preset,
     providerId,
     model,
+    models,
     baseUrl,
     hasKey,
     keyVersion,
@@ -156,16 +167,16 @@ function AiSettings({ settings, ai }: { settings: SettingsController; ai: AiCont
     else setTest({ kind: "fail", detail: status.detail ?? "Couldn't connect." });
   }
 
-  const isSub = preset.kind === "subscription";
+  const isSub = preset.kind === "subscription" || preset.kind === "openai-sub";
 
   return (
     <section className="settings-section">
       <h2 className="settings-h">AI model</h2>
       <p className="settings-lead">
         KestraVault is <strong>bring-your-own-model</strong>. Choose where the AI runs — your Claude
-        subscription, an API key, or a model on your own machine. KestraVault has no servers of its own;
-        keys are <strong>encrypted with your operating-system keychain</strong> and only ever sent
-        to the provider you pick.
+        or ChatGPT subscription, an API key, or a model on your own machine. KestraVault has no
+        servers of its own; keys are <strong>encrypted with your operating-system keychain</strong>{" "}
+        and only ever sent to the provider you pick.
       </p>
 
       <div className="provider-grid">
@@ -189,11 +200,19 @@ function AiSettings({ settings, ai }: { settings: SettingsController; ai: AiCont
       <div className="settings-fields">
         {isSub ? (
           <div className="field-note">
-            <p>
-              Sign in once, the way Claude Code does: open a terminal, run <code>claude</code>, type{" "}
-              <code>/login</code>, and choose <em>“Claude account with subscription.”</em> No API
-              key needed.
-            </p>
+            {preset.kind === "openai-sub" ? (
+              <p>
+                Sign in once with the Codex CLI: install it (
+                <code>npm install -g @openai/codex</code>), run <code>codex</code>, and choose{" "}
+                <em>“Sign in with ChatGPT.”</em> No API key needed.
+              </p>
+            ) : (
+              <p>
+                Sign in once, the way Claude Code does: open a terminal, run <code>claude</code>,
+                type <code>/login</code>, and choose{" "}
+                <em>“Claude account with subscription.”</em> No API key needed.
+              </p>
+            )}
           </div>
         ) : (
           <>
@@ -291,15 +310,15 @@ function AiSettings({ settings, ai }: { settings: SettingsController; ai: AiCont
             onChange={(e) => setProviderField("model", e.target.value)}
           />
           <datalist id={`models-${preset.id}`}>
-            {preset.models.map((m) => (
+            {models.map((m) => (
               <option key={m.id} value={m.id}>
                 {m.label}
               </option>
             ))}
           </datalist>
-          {preset.models.length ? (
+          {models.length ? (
             <div className="model-chips">
-              {preset.models.map((m) => (
+              {models.slice(0, 12).map((m) => (
                 <button
                   key={m.id}
                   className={`model-chip${model === m.id ? " is-active" : ""}`}
@@ -309,6 +328,12 @@ function AiSettings({ settings, ai }: { settings: SettingsController; ai: AiCont
                 </button>
               ))}
             </div>
+          ) : null}
+          {!isSub && !preset.local ? (
+            <span className="field-hint">
+              Model suggestions come live from the provider, so new releases show up here without
+              an app update. Any model id the provider accepts can also be typed directly.
+            </span>
           ) : null}
         </label>
 
@@ -337,17 +362,20 @@ function AiSettings({ settings, ai }: { settings: SettingsController; ai: AiCont
   );
 }
 
-// ── Brain (the AI's standing instructions) ──────────────────────────────────
-// Edits `.kestravault/instructions.md` — the plain-language master schema the
-// AI reads on every chat and vault operation (written by onboarding, injected
-// as the system prompt's vault section). This is the "plain-language
-// instructions editor" from the roadmap: no hidden prompt, full control.
+// ── AI guide (the file the AI reads before every operation) ─────────────────
+// Edits `.kestravault/instructions.md` — the vault's purpose, working rules,
+// and the vault map (the index the AI maintains so it never has to scan every
+// file). Hidden from the file tree, fully editable here — no hidden prompt.
+// Also manages custom skills (.kestravault/skills.json) and offers a one-click
+// "let the AI reorganize + re-index everything" action.
 
 function BrainSettings({
   onBrainSetup,
+  onOptimizeVault,
   onClose,
 }: {
   onBrainSetup?: () => void;
+  onOptimizeVault?: () => void;
   onClose: () => void;
 }) {
   const [text, setText] = useState<string | null>(null);
@@ -362,7 +390,7 @@ function BrainSettings({
         setText(content);
         setSaved(content);
       } catch {
-        setText(null); // no instructions yet — offer setup instead
+        setText(null); // no guide yet — offer setup instead
         setSaved(null);
       }
     })();
@@ -376,7 +404,7 @@ function BrainSettings({
     try {
       await window.api.vault.write(INSTRUCTIONS_PATH, text);
       setSaved(text);
-      setNotice("Saved — the AI follows the new instructions from the next request on.");
+      setNotice("Saved — the AI follows the new guide from the next request on.");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -384,11 +412,12 @@ function BrainSettings({
 
   return (
     <section className="settings-section">
-      <h2 className="settings-h">Brain</h2>
+      <h2 className="settings-h">AI guide</h2>
       <p className="settings-lead">
-        These are the standing instructions your AI reads before every answer and every vault
-        operation — what this vault is for, how pages are organized, and the voice it should
-        write in. Plain language; edit them like any note.
+        This is the file your AI reads before every answer and every vault operation — what this
+        vault is for, how it should work, and a <strong>vault map</strong> that indexes your
+        structure so the AI can find anything without scanning every file. Plain language; edit it
+        like any note, or let the AI restructure and re-index everything for you.
       </p>
 
       {error ? <div className="field-note field-warn"><p>{error}</p></div> : null}
@@ -398,8 +427,8 @@ function BrainSettings({
         <div className="settings-fields">
           <div className="field-note">
             <p>
-              This vault has no instructions yet. Run the setup wizard to create them — it asks a
-              few questions and writes <code>.kestravault/instructions.md</code> for you.
+              This vault has no AI guide yet. Run the setup wizard to create it — it asks a few
+              questions and writes <code>.kestravault/instructions.md</code> for you.
             </p>
           </div>
           {onBrainSetup ? (
@@ -411,13 +440,28 @@ function BrainSettings({
                   onBrainSetup();
                 }}
               >
-                Set up my brain
+                Set up my vault
               </button>
             </div>
           ) : null}
         </div>
       ) : (
         <div className="settings-fields">
+          {onOptimizeVault ? (
+            <div className="field-row">
+              <div className="field-row-text">
+                <span className="field-label">Let the AI optimize your vault</span>
+                <span className="field-hint">
+                  The AI analyzes your notes, reorganizes folders and files for better retrieval
+                  (nothing is ever deleted — only moved), and rewrites the vault map so it can
+                  always find everything. You'll see every change it makes.
+                </span>
+              </div>
+              <button className="ai-btn-primary" onClick={onOptimizeVault}>
+                Optimize with AI
+              </button>
+            </div>
+          ) : null}
           <textarea
             className="brain-editor"
             value={text}
@@ -429,7 +473,7 @@ function BrainSettings({
           />
           <div className="field-key-actions">
             <button className="ai-btn-primary" disabled={!dirty} onClick={() => void save()}>
-              {dirty ? "Save instructions" : "Saved"}
+              {dirty ? "Save guide" : "Saved"}
             </button>
             {dirty ? (
               <button className="ai-btn-ghost" onClick={() => setText(saved)}>
@@ -451,12 +495,174 @@ function BrainSettings({
           <div className="field-note">
             <p>
               Stored at <code>.kestravault/instructions.md</code> in your vault — synced with it,
-              and readable by Claude Code or any other agent you point at the folder.
+              hidden from the file tree, and always yours to edit.
             </p>
           </div>
+          <SkillsSettings />
         </div>
       )}
     </section>
+  );
+}
+
+// ── Custom skills ────────────────────────────────────────────────────────────
+// User-authored agent instructions, runnable from the chat's "/" menu next to
+// the built-in skills. Stored in the vault (.kestravault/skills.json).
+
+const EMPTY_SKILL = { label: "", description: "", prompt: "", needsNote: false };
+
+function SkillsSettings() {
+  const [skills, setSkills] = useState<CustomSkill[]>([]);
+  const [draft, setDraft] = useState<typeof EMPTY_SKILL>(EMPTY_SKILL);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+
+  useEffect(() => {
+    void readCustomSkills().then(setSkills);
+  }, []);
+
+  async function persist(next: CustomSkill[]): Promise<void> {
+    setSkills(next);
+    await writeCustomSkills(next);
+  }
+
+  function startEdit(s: CustomSkill): void {
+    setEditingId(s.id);
+    setDraft({
+      label: s.label,
+      description: s.description,
+      prompt: s.prompt,
+      needsNote: s.needsNote === true,
+    });
+    setFormOpen(true);
+  }
+
+  async function saveDraft(): Promise<void> {
+    const label = draft.label.trim();
+    const prompt = draft.prompt.trim();
+    if (!label || !prompt) return;
+    const skill: CustomSkill = {
+      id: editingId ?? slugifySkillLabel(label),
+      label,
+      description: draft.description.trim(),
+      prompt,
+      needsNote: draft.needsNote,
+    };
+    const next = editingId
+      ? skills.map((s) => (s.id === editingId ? skill : s))
+      : [...skills.filter((s) => s.id !== skill.id), skill];
+    await persist(next);
+    setDraft(EMPTY_SKILL);
+    setEditingId(null);
+    setFormOpen(false);
+  }
+
+  return (
+    <>
+      <div className="field-row">
+        <div className="field-row-text">
+          <span className="field-label">Custom skills</span>
+          <span className="field-hint">
+            Your own reusable AI operations — they appear in the chat's “/” menu next to the
+            built-in skills, and follow the guide above.
+          </span>
+        </div>
+        <button
+          className="ai-btn-ghost"
+          onClick={() => {
+            setDraft(EMPTY_SKILL);
+            setEditingId(null);
+            setFormOpen((v) => !v);
+          }}
+        >
+          {formOpen && !editingId ? "Cancel" : "Add skill"}
+        </button>
+      </div>
+
+      {skills.map((s) => (
+        <div className="field-row" key={s.id}>
+          <div className="field-row-text">
+            <span className="field-label">{s.label}</span>
+            <span className="field-hint">{s.description || s.prompt.slice(0, 80)}</span>
+          </div>
+          <div className="field-key-actions">
+            <button className="ai-btn-ghost" onClick={() => startEdit(s)}>
+              Edit
+            </button>
+            <button
+              className="ai-btn-ghost"
+              onClick={() => void persist(skills.filter((x) => x.id !== s.id))}
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      ))}
+
+      {formOpen ? (
+        <div className="settings-fields">
+          <label className="field">
+            <span className="field-label">Name</span>
+            <input
+              className="field-input"
+              type="text"
+              value={draft.label}
+              placeholder="e.g. Weekly review"
+              onChange={(e) => setDraft((d) => ({ ...d, label: e.target.value }))}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">Description (shown in the menu)</span>
+            <input
+              className="field-input"
+              type="text"
+              value={draft.description}
+              placeholder="e.g. Summarize this week's notes into a review"
+              onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
+            />
+          </label>
+          <label className="field">
+            <span className="field-label">Instruction for the AI</span>
+            <textarea
+              className="field-input skill-prompt"
+              rows={4}
+              value={draft.prompt}
+              placeholder="What should the AI do when this skill runs?"
+              onChange={(e) => setDraft((d) => ({ ...d, prompt: e.target.value }))}
+            />
+          </label>
+          <div className="field-row">
+            <div className="field-row-text">
+              <span className="field-label">Works on the open note</span>
+              <span className="field-hint">Require a note to be open, and target it.</span>
+            </div>
+            <Toggle
+              on={draft.needsNote}
+              onChange={(v) => setDraft((d) => ({ ...d, needsNote: v }))}
+            />
+          </div>
+          <div className="field-key-actions">
+            <button
+              className="ai-btn-primary"
+              disabled={!draft.label.trim() || !draft.prompt.trim()}
+              onClick={() => void saveDraft()}
+            >
+              {editingId ? "Save skill" : "Add skill"}
+            </button>
+            <button
+              className="ai-btn-ghost"
+              onClick={() => {
+                setDraft(EMPTY_SKILL);
+                setEditingId(null);
+                setFormOpen(false);
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -1189,7 +1395,7 @@ function AboutSettings({
       <h2 className="settings-h">About KestraVault</h2>
       <p className="settings-lead">
         An open-source, AI-first second brain — <strong>free</strong>, and you bring your own model.
-        Drop in sources, ask questions, and let an AI keep an interlinked wiki fresh.
+        Your notes, your structure; an AI that organizes, connects, and finds everything for you.
       </p>
 
       <div className="about-badges">
@@ -1231,14 +1437,6 @@ function AboutSettings({
           </button>
         </div>
 
-        <div className="field-note">
-          <p>
-            KestraVault productizes the “LLM wiki” pattern.{" "}
-            <a href={INSPIRATION_URL} target="_blank" rel="noreferrer" className="field-link">
-              Read the inspiration →
-            </a>
-          </p>
-        </div>
       </div>
     </section>
   );

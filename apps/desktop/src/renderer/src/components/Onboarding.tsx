@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AiAvatar } from "@renderer/components/AiIcons";
 import type { AiController } from "@renderer/vault/useAi";
 import {
-  CATEGORY_CHOICES,
+  FOLDER_CHOICES,
   LANGUAGE_CHOICES,
   PURPOSES,
   applyBrainSetup,
@@ -20,11 +20,11 @@ import {
 import "./Onboarding.css";
 
 // The new-vault onboarding wizard. A few questions → the app scaffolds the
-// vault's "brain": folder zones, .kestravault/instructions.md (the schema the AI
-// follows everywhere), AGENTS.md/CLAUDE.md stubs for external tools, index.md
-// and log.md. When an AI provider is connected the instructions are rewritten
-// by the model itself ("personalize"); otherwise the template ships as-is and
-// can be personalized later by re-running the wizard.
+// user's own structure: the folders they picked plus .kestravault/instructions.md
+// (the AI guide: purpose, working rules, and the vault map the AI keeps
+// current). When an AI provider is connected the guide is rewritten by the
+// model itself ("personalize"); otherwise the template ships as-is and can be
+// personalized later by re-running the wizard.
 
 export interface OnboardingProps {
   vaultName: string;
@@ -72,18 +72,18 @@ export function Onboarding({
   const template = useMemo(() => buildInstructions(profile, vaultName), [profile, vaultName]);
 
   function pickPurpose(id: BrainProfile["purpose"]): void {
-    // Choosing a purpose resets the category selection to its defaults; the
+    // Choosing a purpose resets the folder selection to its defaults; the
     // Preferences step still lets the user tweak them.
-    setProfile((cur) => ({ ...cur, purpose: id, categories: purposeOf(id).categories }));
+    setProfile((cur) => ({ ...cur, purpose: id, folders: purposeOf(id).folders }));
     setStep(2);
   }
 
-  function toggleCategory(cat: string): void {
+  function toggleFolder(folder: string): void {
     setProfile((cur) => ({
       ...cur,
-      categories: cur.categories.includes(cat)
-        ? cur.categories.filter((c) => c !== cat)
-        : [...cur.categories, cat],
+      folders: cur.folders.includes(folder)
+        ? cur.folders.filter((f) => f !== folder)
+        : [...cur.folders, folder],
     }));
   }
 
@@ -145,7 +145,7 @@ export function Onboarding({
 
   return (
     <div className="overlay onboarding-overlay">
-      <div className="onboarding" role="dialog" aria-label="Set up your brain">
+      <div className="onboarding" role="dialog" aria-label="Set up your vault">
         <header className="onboarding-head">
           <AiAvatar size={22} />
           <span className="onboarding-vault">{vaultName}</span>
@@ -163,39 +163,33 @@ export function Onboarding({
 
         {phase === "done" && applied ? (
           <div className="onboarding-body">
-            <h2>Your brain is ready 🎉</h2>
+            <h2>Your vault is ready 🎉</h2>
             <p>
-              The AI now follows a guide written just for this vault. Drop material into the{" "}
-              <strong>sources</strong> folder, use <strong>Ingest</strong> in the AI chat to file
-              it into your wiki, and run <strong>Lint</strong> now and then to keep everything
-              healthy.
+              The AI now follows a guide written just for this vault — your folders, your rules,
+              and a vault map it keeps current so it can always find what you need. Write notes,
+              use <strong>File this note</strong> in the AI chat to put things where they belong,
+              and run <strong>Tidy my vault</strong> now and then to keep everything healthy.
             </p>
             <ul className="onboarding-files">
               <li>
-                Your instruction guide is saved inside the vault. You can edit it anytime, and it
-                keeps improving as your preferences are added.
+                Your AI guide is saved inside the vault. You can edit it anytime in Settings →
+                AI guide — or let the AI reorganize and re-index everything for you from there.
               </li>
-              <li>
-                Other AI tools (Claude Code, ChatGPT/Codex) will follow the same rules if you ever
-                open this folder with them.
-              </li>
-              {applied.kept.length ? (
-                <li>Everything you already had was left untouched.</li>
-              ) : null}
+              <li>Everything you already had was left untouched.</li>
             </ul>
             <footer className="onboarding-foot">
               <button className="ai-btn-primary" onClick={() => onClose("done", applied)}>
-                Start using my brain
+                Start writing
               </button>
             </footer>
           </div>
         ) : phase === "enhancing" || phase === "applying" ? (
           <div className="onboarding-body">
-            <h2>{phase === "enhancing" ? "Personalizing your brain…" : "Creating your brain…"}</h2>
+            <h2>{phase === "enhancing" ? "Personalizing your vault…" : "Setting up your vault…"}</h2>
             <p className="onboarding-hint">
               {phase === "enhancing"
-                ? `${providerLabel} is writing this vault's instruction guide from your answers.`
-                : "Setting up your vault."}
+                ? `${providerLabel} is writing this vault's AI guide from your answers.`
+                : "Creating your folders and the AI guide."}
             </p>
             {preview ? <pre className="onboarding-preview">{preview}</pre> : null}
           </div>
@@ -203,14 +197,16 @@ export function Onboarding({
           <div className="onboarding-body">
             <h2>Set up your second brain</h2>
             <p>
-              This vault can be more than notes: you drop in raw material and an AI builds and
-              maintains an interlinked <strong>wiki</strong> from it, with summaries,
-              cross-references, flagged contradictions, and an index that stays current.
+              This vault can be more than notes: an AI helps you organize, connect, and find
+              everything — using a structure that's <strong>yours</strong>, not one imposed on
+              you.
             </p>
             <p>
-              A few questions will shape how the AI works <em>here</em>: what it's for, how it
-              should write, and how much it should check with you. Your answers become this vault's
-              instruction guide, which you can edit anytime and which improves as you use it.
+              A few questions will shape how the AI works <em>here</em>: what the vault is for,
+              which folders it starts with, how the AI should write, and how much it should check
+              with you. Your answers become this vault's AI guide — a short file the AI reads
+              before every operation, with a map of your structure it keeps current. You can edit
+              it anytime.
             </p>
             <footer className="onboarding-foot">
               <button className="ai-btn-primary" onClick={() => setStep(1)}>
@@ -303,34 +299,34 @@ export function Onboarding({
               </select>
             </div>
             <div className="onboarding-row">
-              <span className="onboarding-row-label">When ingesting</span>
+              <span className="onboarding-row-label">When organizing</span>
               <div className="onboarding-seg">
                 <button
                   className={profile.ingestMode === "guided" ? "is-on" : ""}
-                  title="The AI shares takeaways and checks with you before filing"
+                  title="The AI tells you what it plans to change before touching anything"
                   onClick={() => patch({ ingestMode: "guided" })}
                 >
                   Discuss with me first
                 </button>
                 <button
                   className={profile.ingestMode === "auto" ? "is-on" : ""}
-                  title="The AI files sources directly and summarizes what changed"
+                  title="The AI organizes directly and summarizes what changed"
                   onClick={() => patch({ ingestMode: "auto" })}
                 >
-                  File automatically
+                  Organize automatically
                 </button>
               </div>
             </div>
             <div className="onboarding-row">
-              <span className="onboarding-row-label">Wiki sections</span>
+              <span className="onboarding-row-label">Starting folders</span>
               <div className="onboarding-tags">
-                {CATEGORY_CHOICES.map((c) => (
+                {FOLDER_CHOICES.map((f) => (
                   <button
-                    key={c}
-                    className={`onboarding-tag${profile.categories.includes(c) ? " is-on" : ""}`}
-                    onClick={() => toggleCategory(c)}
+                    key={f}
+                    className={`onboarding-tag${profile.folders.includes(f) ? " is-on" : ""}`}
+                    onClick={() => toggleFolder(f)}
                   >
-                    {c}
+                    {f}
                   </button>
                 ))}
               </div>
@@ -341,7 +337,7 @@ export function Onboarding({
               </button>
               <button
                 className="ai-btn-primary"
-                disabled={profile.categories.length === 0}
+                disabled={profile.folders.length === 0}
                 onClick={() => setStep(4)}
               >
                 Continue
@@ -350,27 +346,23 @@ export function Onboarding({
           </div>
         ) : (
           <div className="onboarding-body">
-            <h2>Create your brain</h2>
+            <h2>Create your setup</h2>
             <p>
-              Here's what you'll get. Anything already in your vault stays untouched; only the
-              instruction guide is refreshed.
+              Here's what you'll get. Anything already in your vault stays untouched; only the AI
+              guide is refreshed.
             </p>
             <ul className="onboarding-files">
               <li>
-                <strong>Tidy folders</strong> for your raw material, your own notes, and the AI's
-                wiki ({profile.categories.join(", ")})
+                <strong>Your folders</strong> ({profile.folders.join(", ")}) — a starting
+                structure the AI grows with you.
               </li>
               <li>
-                <strong>A personal instruction guide</strong> built from your answers. The AI
-                follows it in everything it does here, and you can edit it anytime.
+                <strong>A personal AI guide</strong> built from your answers. The AI reads it
+                before every operation, and you can edit it anytime in Settings.
               </li>
               <li>
-                <strong>An index and an activity log</strong> so you can always see what's in the
-                wiki and what changed.
-              </li>
-              <li>
-                <strong>Support for other AI tools</strong> like Claude Code and ChatGPT (Codex),
-                which follow the same rules if you open this folder with them.
+                <strong>A vault map</strong> inside the guide — an index the AI keeps current so
+                it can find anything without scanning every file.
               </li>
             </ul>
             {error ? <div className="ai-error">{error}</div> : null}
@@ -389,9 +381,9 @@ export function Onboarding({
             ) : (
               <>
                 <p className="onboarding-hint">
-                  {providerLabel} isn't connected yet, so your instruction guide will start from a
-                  solid template built from your answers. Connect a model later and re-run{" "}
-                  <em>Set up my brain</em> to have the AI personalize it further.
+                  {providerLabel} isn't connected yet, so your AI guide will start from a solid
+                  template built from your answers. Connect a model later and re-run{" "}
+                  <em>Set up my vault</em> to have the AI personalize it further.
                 </p>
                 <footer className="onboarding-foot">
                   <button className="ai-btn-ghost" onClick={() => setStep(3)}>
@@ -404,7 +396,7 @@ export function Onboarding({
                     Re-check connection
                   </button>
                   <button className="ai-btn-primary" onClick={() => void apply(undefined)}>
-                    Create my brain
+                    Create my setup
                   </button>
                 </footer>
               </>

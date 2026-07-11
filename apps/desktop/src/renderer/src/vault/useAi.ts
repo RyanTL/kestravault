@@ -17,10 +17,10 @@ export interface StreamHandlers {
   onError: (kind: AiErrorKind, message: string) => void;
 }
 
-/** Handlers for a vault agent operation (Ingest / Lint) — a tool-using run. */
+/** Handlers for a vault agent operation (a skill) — a tool-using run. */
 export interface AgentHandlers extends Omit<StreamHandlers, "onDone"> {
-  /** A tool call was allowed — e.g. "write wiki/concepts/x.md". */
-  onTool: (action: "read" | "search" | "write", path?: string) => void;
+  /** A tool call was allowed — e.g. "write projects/x.md". */
+  onTool: (action: "read" | "search" | "write" | "move", path?: string) => void;
   onDone: (full: string, changed: AgentChangedFile[]) => void;
 }
 
@@ -141,11 +141,11 @@ export function useAi(getProvider?: () => AiProviderConfig | undefined) {
     [],
   );
 
-  /** Run a vault agent operation (Ingest / Lint). Returns the id and a cancel fn. */
+  /** Run a vault agent operation (a skill). Returns the id and a cancel fn. */
   const agentRun = useCallback(
     (
       op: AgentOpKind,
-      opts: { targetPath?: string; model?: string },
+      opts: { targetPath?: string; model?: string; prompt?: string },
       h: AgentHandlers,
     ): { id: string; cancel: () => void } => {
       const id = newRequestId();
@@ -154,6 +154,7 @@ export function useAi(getProvider?: () => AiProviderConfig | undefined) {
         requestId: id,
         op,
         targetPath: opts.targetPath,
+        prompt: opts.prompt,
         model: opts.model,
         provider: provider(),
       });

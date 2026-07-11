@@ -5,8 +5,8 @@ function toIsoDate(date: Date): string {
 }
 
 /**
- * Build a Karpathy-style source filename: `s-<date>-<slug>.md`. Keeping the
- * date prefix makes the log greppable and the sources/ folder chronological.
+ * Build a dated source filename: `s-<date>-<slug>.md`. Keeping the date
+ * prefix makes filenames greppable and a folder of captures chronological.
  *
  *   sourceFilename("Intro to Rust ownership", "2026-06-27")
  *   // "s-2026-06-27-intro-to-rust-ownership.md"

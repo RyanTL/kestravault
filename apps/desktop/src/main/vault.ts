@@ -14,7 +14,6 @@ import {
   type PrivacyRule,
   type PrivacyTarget,
 } from "@kestravault/core";
-import { SEED_FILES } from "./seed.js";
 
 // A vault is a real folder of markdown on disk (the desktop "mirror" from
 // plan/data-model.md). The app can know about several of them at once
@@ -114,49 +113,24 @@ export function vaultRoot(): string {
   return registry?.currentPath ?? defaultVaultPath();
 }
 
-/** Write the seed notes into a vault root (used on first creation only). */
-async function writeSeed(root: string): Promise<void> {
-  for (const seed of SEED_FILES) {
-    const abs = join(root, seed.path.split("/").join(sep));
-    await fs.mkdir(dirname(abs), { recursive: true });
-    await fs.writeFile(abs, seed.content, "utf8");
-  }
-}
-
-/** True when a folder is missing or contains no visible (non-dotfile) entries. */
-async function isEmptyDir(root: string): Promise<boolean> {
-  try {
-    const entries = await fs.readdir(root);
-    return entries.every((name) => name.startsWith("."));
-  } catch {
-    return true;
-  }
-}
-
-/** Ensure a vault folder exists, optionally seeding it when freshly created. */
-async function ensureVaultAt(root: string, opts: { seed: boolean }): Promise<void> {
-  let firstRun = false;
-  try {
-    await fs.access(root);
-  } catch {
-    firstRun = true;
-  }
+/** Ensure a vault folder exists. Vaults always start empty — the onboarding
+ *  wizard (renderer) scaffolds the user's own structure right after creation. */
+async function ensureVaultAt(root: string): Promise<void> {
   await fs.mkdir(root, { recursive: true });
-  if (firstRun && opts.seed) await writeSeed(root);
 }
 
-/** Load the registry and make sure the current vault exists + is seeded on its
- *  very first run. Call once at startup before any vault IPC. */
+/** Load the registry and make sure the current vault's folder exists. Call
+ *  once at startup before any vault IPC. */
 export async function initVaults(): Promise<string> {
   await loadRegistry();
-  await ensureVaultAt(registry!.currentPath, { seed: true });
+  await ensureVaultAt(registry!.currentPath);
   return registry!.currentPath;
 }
 
 /** Ensure the *current* vault's folder exists. Cheap to call on every read. */
 export async function ensureVault(): Promise<string> {
   await loadRegistry();
-  await ensureVaultAt(vaultRoot(), { seed: false });
+  await ensureVaultAt(vaultRoot());
   return vaultRoot();
 }
 
@@ -168,21 +142,15 @@ export async function listVaults(): Promise<VaultInfo[]> {
 
 /** Switch to an already-known vault (or register it if new), making it current. */
 export async function switchVault(path: string): Promise<string> {
-  return registerVault(path, { seedIfEmpty: false });
+  return registerVault(path);
 }
 
-/** Register a folder as a vault and make it current. `seedIfEmpty` seeds the
- *  starter notes only when the chosen folder has no content yet (used by
- *  "Create new vault"; "Open folder as vault" leaves existing content alone). */
-export async function registerVault(
-  path: string,
-  opts: { seedIfEmpty: boolean },
-): Promise<string> {
+/** Register a folder as a vault and make it current. Existing content is
+ *  always left exactly as-is. */
+export async function registerVault(path: string): Promise<string> {
   await loadRegistry();
   const abs = resolve(path);
-  const emptyBefore = opts.seedIfEmpty ? await isEmptyDir(abs) : false;
-  await ensureVaultAt(abs, { seed: false });
-  if (emptyBefore) await writeSeed(abs);
+  await ensureVaultAt(abs);
   if (!registry!.vaults.some((v) => v.path === abs)) {
     registry!.vaults.push({ path: abs, addedAt: Date.now() });
   }
