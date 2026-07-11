@@ -206,6 +206,24 @@ export default function App() {
   useEffect(() => {
     window.api.collab.setActiveNote(activePath, activePath ? noteName(activePath) : null);
   }, [activePath]);
+
+  // Name of the linked shared workspace, for the sidebar's Shared section
+  // (null while the vault isn't linked to one).
+  const [sharedWorkspace, setSharedWorkspace] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const apply = (st: { workspaceId: string | null; workspaceName: string | null }): void => {
+      setSharedWorkspace(st.workspaceId ? (st.workspaceName ?? "Shared vault") : null);
+    };
+    void window.api.sync.status().then((st) => {
+      if (alive) apply(st);
+    });
+    const off = window.api.sync.onStatus(apply);
+    return () => {
+      alive = false;
+      off();
+    };
+  }, []);
   // Whether the active AI provider runs on the user's machine (Ollama / LM
   // Studio). When local, nothing leaves the device, so the per-note Private flag
   // is relaxed (full body shared; the toggle's helper text reflects this).
@@ -617,6 +635,8 @@ export default function App() {
             onSetPrivacy={(path, target, mode) => vault.setPrivacy(path, target, mode)}
             onClearPrivacy={(path, target) => vault.clearPrivacy(path, target)}
             onReveal={(p) => void window.api.vault.reveal(p)}
+            sharedWorkspaceName={sharedWorkspace}
+            onStartCollaborating={() => openSettings("sync")}
           />
         ) : null}
 

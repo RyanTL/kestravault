@@ -647,6 +647,85 @@ body.is-col-resizing {
   outline: none;
 }
 
+/* ---- Left: Shared section + New-note footer (below the file tree) ---- */
+.shared-section {
+  flex: 0 0 auto;
+  padding: 8px 6px 2px;
+  border-top: 1px solid var(--border);
+}
+
+.shared-label {
+  padding: 2px 8px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-faint);
+}
+
+.shared-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.shared-row:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.shared-row svg {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.shared-row-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.new-note-footer {
+  flex: 0 0 auto;
+  padding: 8px 10px 10px;
+}
+
+.new-note-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  padding: 7px 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.new-note-cta:hover {
+  background: var(--bg-hover);
+}
+
+.new-note-cta svg {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+.new-note-cta kbd {
+  color: var(--text-faint);
+}
+
 /* ---- Context menu ---- */
 .context-menu {
   position: fixed;
