@@ -4,7 +4,7 @@ import type { VaultInfo, VaultNode } from "@renderer/vault/types";
 import { baseName, dirName, noteName } from "@renderer/vault/paths";
 import { VaultSwitcher } from "@renderer/components/VaultSwitcher";
 import { sortTree, useTreeOrder } from "@renderer/vault/useTreeOrder";
-import { ChevronRight, FolderPlus, FilePlus, Lock, CloudOff } from "lucide-react";
+import { ChevronRight, FolderPlus, FilePlus, Lock, CloudOff, Plus, Users, SquarePen } from "lucide-react";
 
 function ChevronIcon() {
   return <ChevronRight size={12} strokeWidth={1.8} aria-hidden />;
@@ -71,6 +71,10 @@ interface FileExplorerProps {
   onSetPrivacy: (path: string, target: PrivacyTarget, mode: PrivacyMode) => Promise<void>;
   onClearPrivacy: (path: string, target: PrivacyTarget) => Promise<void>;
   onReveal: (path?: string) => void;
+  /** Name of the linked shared workspace, or null when the vault isn't shared. */
+  sharedWorkspaceName: string | null;
+  /** Open the sharing settings (invite people / manage the workspace). */
+  onStartCollaborating: () => void;
 }
 
 // Drag-and-drop to move/reorder notes. We carry the note's path on a private
@@ -660,6 +664,33 @@ export function FileExplorer(props: FileExplorerProps) {
         }}
       >
         <ul className="tree-root">{orderedTree.map((n) => renderNode(n, 0))}</ul>
+      </div>
+
+      <div className="shared-section">
+        <div className="shared-label">Shared</div>
+        {props.sharedWorkspaceName ? (
+          <button
+            className="shared-row"
+            title="Manage sharing"
+            onClick={props.onStartCollaborating}
+          >
+            <Users size={15} strokeWidth={1.6} aria-hidden />
+            <span className="shared-row-label">{props.sharedWorkspaceName}</span>
+          </button>
+        ) : (
+          <button className="shared-row" onClick={props.onStartCollaborating}>
+            <Plus size={15} strokeWidth={1.6} aria-hidden />
+            <span className="shared-row-label">Start collaborating</span>
+          </button>
+        )}
+      </div>
+
+      <div className="new-note-footer">
+        <button className="new-note-cta" onClick={() => void createNoteIn("")}>
+          <SquarePen size={15} strokeWidth={1.6} aria-hidden />
+          <span>New</span>
+          <kbd>{window.api.platform === "darwin" ? "⌘N" : "Ctrl N"}</kbd>
+        </button>
       </div>
 
       {menu ? (
