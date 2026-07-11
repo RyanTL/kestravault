@@ -2,6 +2,8 @@
 
 _How a workspace ("a brain") is structured, stored, synced, and versioned. Implements vision decisions #3–5, #10, #20 and the locked sync engine._
 
+> **2026-07-11 update:** the fixed three-zone layout (`sources/` / `wiki/` / `notes/`) described below is no longer imposed by the app. Each vault's structure is now user-defined via onboarding and recorded in the vault's AI guide (`.kestravault/instructions.md`), which also carries the **vault map** — the index the agent maintains and reads first. The storage/sync/versioning design below is unchanged; only the prescribed folder layout is historical.
+
 ## Two representations of the same data
 The same markdown exists in two forms; sync keeps them consistent.
 

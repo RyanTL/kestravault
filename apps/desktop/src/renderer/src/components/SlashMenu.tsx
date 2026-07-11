@@ -15,6 +15,7 @@ import {
   Italic,
   Import,
   ScanSearch,
+  FolderTree,
 } from "lucide-react";
 import { VAULT_SKILLS } from "@renderer/vault/aiPrompts";
 import {
@@ -207,10 +208,11 @@ const COMMANDS: SlashCommand[] = [
   },
 ];
 
-// Skill icons mirror the AI panel (Import = ingest, ScanSearch = lint).
+// Skill icons mirror the AI panel (keyed by each skill's `icon` name).
 const SKILL_ICON: Record<string, ReactNode> = {
   ingest: <Import className="slash-svg" aria-hidden />,
   lint: <ScanSearch className="slash-svg" aria-hidden />,
+  organize: <FolderTree className="slash-svg" aria-hidden />,
 };
 
 // Vault skills as slash commands. Unlike block commands they don't insert
@@ -224,7 +226,7 @@ function skillCommands(onRunSkill: (id: string) => void): SlashCommand[] {
     group: "Actions",
     keywords: ["ai", "skill", "agent", s.id],
     hint: "AI",
-    icon: SKILL_ICON[s.id],
+    icon: SKILL_ICON[s.icon],
     apply: (v: EditorView, from: number, to: number) => {
       v.dispatch({ changes: { from, to, insert: "" }, userEvent: "input.complete" });
       v.focus();
@@ -293,7 +295,7 @@ interface SlashMenuProps {
   view: EditorView | null;
   /** Give CodeMirror's keymap a handle to drive selection/confirm/close. */
   registerController: (controller: SlashController | null) => void;
-  /** When set, the "/" menu also offers vault skills (Ingest / Lint). */
+  /** When set, the "/" menu also offers the built-in vault skills. */
   onRunSkill?: (id: string) => void;
 }
 

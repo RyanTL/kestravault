@@ -1,30 +1,29 @@
-# KestraVault — Overview gy
+# KestraVault — Overview
 
-An open-source, **AI-first "second brain."** You drop in raw sources and ask questions; a cloud agent compiles and continuously maintains a living, interlinked **markdown wiki** from them. Native desktop + mobile, synced everywhere. Working name: *KestraVault*.
+An open-source, **AI-first "second brain."** You write and collect notes in a structure that's yours; an AI agent organizes, cross-links, and indexes everything so it can always find what you need. Native desktop + mobile, synced everywhere. Working name: *KestraVault*.
 
 ## The idea
 
-Productize Andrej Karpathy's ["LLM Wiki" pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) and strip out the friction. People build powerful second brains today with **Obsidian + Claude Code**, but that setup is:
+People build powerful AI-assisted second brains today by stitching a notes app together with a terminal coding agent, but that setup is:
 
 - hard to set up for non-technical people,
 - local-only unless you self-host,
-- impossible to run on a phone (no Claude Code on mobile),
-- two separate apps stitched together.
+- impossible to run on a phone,
+- two separate apps stitched together,
+- and usually locked to someone else's organizational system.
 
-KestraVault collapses all of that into **one synced, cross-platform app**.
+KestraVault collapses all of that into **one synced, cross-platform app** — with a structure the user chooses, not one imposed on them.
 
 ## The vision
 
-> Drop in sources and ask questions; an AI agent compiles and continuously maintains an interlinked wiki — *integrate once, keep fresh* — across all your devices, with plain manual notes whenever you want, and the AI machinery hidden until you ask for it.
+> Write notes and ask questions; an AI agent keeps your vault organized, interlinked, and indexed — *your structure, always findable* — across all your devices, with the AI machinery hidden until you ask for it.
 
 **Magic by default, full control on demand.** Markdown is always the source of truth (never a lossy WYSIWYG lock-in).
 
-### The three-zone data model
-- `sources/` — your raw inputs, **immutable**.
-- `wiki/` — the interlinked knowledge base, **agent-owned**.
-- `notes/` — plain manual notes, **human-owned**.
-
-Plus an `index`, a change `log`, and hidden plain-language agent instructions.
+### The data model
+- **User-chosen folders** — onboarding scaffolds the structure the user picks; the agent grows it with them.
+- **The AI guide** (`.kestravault/instructions.md`) — a short, hidden-but-editable file the agent reads before every operation: the vault's purpose, working rules, and a **vault map** (the index of the structure) the agent keeps current so it never has to scan every file.
+- **Nothing is ever deleted** by the agent — only moved (e.g. into an archive folder).
 
 ## Stack
 
@@ -40,21 +39,21 @@ TypeScript monorepo (pnpm + turborepo).
 - **Notion-style header** (tabs → breadcrumb path → editable inline title), clean new notes (no boilerplate, properties hidden until added), tabs + split panes.
 - **Navigation:** quick switcher (⌘O), command palette (⌘P), full-text search (⌘⇧F), right-sidebar outline + backlinks, graph view, bookmarks.
 - **AI assistant (Notion-style):** right-side **Ask AI** chat (⌘J) with streaming, page-scoped vs whole-vault context, source citations, model picker, and page actions (summarize / improve / action items / translate). "Search or ask AI" combines AI + full-text hits. Runs on the user's **Claude subscription** via the Claude Agent SDK — no API key (one-time `claude /login`).
-- **Bring-your-own-model:** Claude subscription, API key (Anthropic / OpenAI / OpenRouter), or local model (Ollama / LM Studio / any OpenAI-compatible endpoint). Keys **encrypted at rest** in the OS keychain, main-process only.
-- **Brain onboarding:** a wizard on every new vault (purpose, topics, about-you, style, ingest mode, wiki sections) scaffolds the three zones and writes `.kestravault/instructions.md` — the vault's schema, optionally **AI-personalized** — plus `AGENTS.md`/`CLAUDE.md` stubs so Claude Code and Codex/ChatGPT follow the same rules inside the vault folder. The schema is injected into every AI chat, and grows via a "Learned preferences" section.
-- **Vault skills (Ingest / Lint):** chat buttons that run a real tool-using agent on the vault — sandboxed to `wiki/**`, `index.md`, `log.md` — with live progress and changed-file chips (Claude subscription / Anthropic API).
+- **Bring-your-own-model:** Claude subscription, ChatGPT subscription (via the Codex CLI), API key (Anthropic / OpenAI / OpenRouter), or local model (Ollama / LM Studio / any OpenAI-compatible endpoint). Model lists refresh live from each provider, so new models appear without an app update. Keys **encrypted at rest** in the OS keychain, main-process only.
+- **Vault onboarding:** a wizard on every new vault (purpose, topics, about-you, style, organizing mode, starting folders) scaffolds the user's structure and writes `.kestravault/instructions.md` — the AI guide, optionally **AI-personalized**: purpose + working rules + a **vault map** (the index) the agent maintains. The guide is injected into every AI chat and grows via a "Learned preferences" section; it's editable in Settings → AI guide.
+- **Vault skills:** chat operations that run a real tool-using agent on the vault — *File this note*, *Tidy my vault*, *Reorganize my vault* (also one click in Settings: "Optimize with AI"), plus **user-defined custom skills** — with live progress and changed-file chips (Claude subscription / Anthropic API). The agent can create, edit, and move notes; it can never delete, and app metadata stays read-only.
 - **Theming:** dark-first minimal theme with light/dark/system switch.
 - **Packaging:** electron-builder for macOS (.dmg/.zip), Windows (NSIS), Linux (AppImage/.deb) — currently unsigned.
 - **OSS hygiene:** MIT license, README, SECURITY.md, CONTRIBUTING.md, Electron navigation/link hardening.
 - **Core building blocks:** data model, ingest logic, and a 3-way merge engine exist in `packages/core`.
 
-> The desktop AI is a local stand-in for the eventual cloud Managed Agent. The core ingest/wiki-maintenance loop is not wired up yet.
+> The desktop AI is a local stand-in for the eventual cloud Managed Agent. The always-on cloud maintenance loop is not wired up yet.
 
 ## Planned / future
 
 **Private Beta (next):**
 - Cloud backend (Supabase auth + canonical markdown store, one workspace/user).
-- The real **cloud agent loop**: ingest a source → wiki page → index/cross-refs → change log.
+- The real **cloud agent loop**: capture a note → filed into the structure → index/cross-refs → change feed.
 - **Change feed + undo** for agent edits; **query with citations**.
 - Hidden **Brain settings** (a UI for editing the plain-language instructions), model routing (Haiku/Sonnet/Opus), sync to a local folder.
 
@@ -68,13 +67,13 @@ TypeScript monorepo (pnpm + turborepo).
 - **Teams / collaboration** (shared workspaces, permissions, presence, ~$50 plan).
 - More capture: file upload (PDF/docx/md/txt), URL fetch & convert, mobile share-sheet, web clipper, email-in, voice → transcribe.
 - **Import** from Notion / Obsidian.
-- **Lint** as a cloud operation (a local desktop version ships today as a vault skill).
+- **Tidy** as a cloud operation (a local desktop version ships today as a vault skill).
 - Output formats (Marp decks, charts, comparison tables), Dataview-style queries.
-- Local-only / self-host runtime, templates gallery, optional web app, scaled wiki search (BM25 + vector).
+- Local-only / self-host runtime, templates gallery, optional web app, scaled vault search (BM25 + vector).
 
 ## The "wow"
 
-Drop a source → within moments the wiki has a new page, updated cross-references, and a visible "here's what I changed" feed → ask a question → get a cited answer you can file back. No terminal, on a device you already use.
+Write a note → one click files it into your structure with cross-references, a fresh index, and a visible "here's what I changed" feed → ask a question → get a cited answer instantly, because the AI always knows where everything lives. No terminal, on a device you already use.
 
 ---
 *Full plan lives in [`plan/`](plan/README.md): vision, architecture, data-model, agent-loop, roadmap, open-questions.*

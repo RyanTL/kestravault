@@ -28,6 +28,7 @@ import {
   cancelAiRequest,
   aiStatus,
   resetAiStatus,
+  listAiModels,
   type AiSendRequest,
   type AiProviderConfig,
 } from "./ai.js";
@@ -215,17 +216,17 @@ function registerVaultIpc(): void {
     const win = BrowserWindow.fromWebContents(e.sender);
     const dir = await pickVaultFolder(win, "open");
     if (!dir) return null;
-    const root = await registerVault(dir, { seedIfEmpty: false });
+    const root = await registerVault(dir);
     rewatch(win);
     return root;
   });
-  // Create a new vault. No demo seed: the onboarding wizard scaffolds the
-  // brain (folders, instructions, index/log) right after creation.
+  // Create a new vault. It starts empty: the onboarding wizard scaffolds the
+  // user's own structure (folders + the AI guide) right after creation.
   ipcMain.handle("vault:create", async (e) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     const dir = await pickVaultFolder(win, "create");
     if (!dir) return null;
-    const root = await registerVault(dir, { seedIfEmpty: false });
+    const root = await registerVault(dir);
     rewatch(win);
     return root;
   });
@@ -245,8 +246,8 @@ function registerAiIpc(): void {
     cancelAiRequest(requestId);
     cancelAgentOp(requestId);
   });
-  // Vault agent operations (Ingest / Lint): a real tool-using agent run,
-  // sandboxed to the vault's writable zones (see agentOps.ts).
+  // Vault agent operations (skills): a real tool-using agent run, guided by
+  // the vault's AI guide and guarded by agentOps.ts's tool checks.
   ipcMain.handle("ai:agent", (e, req: AgentOpRequest) => {
     const win = BrowserWindow.fromWebContents(e.sender);
     if (win) return runAgentOp(win, req);
@@ -255,6 +256,8 @@ function registerAiIpc(): void {
     aiStatus(provider, force),
   );
   ipcMain.handle("ai:reset-status", () => resetAiStatus());
+  // Live model discovery: what the active provider can serve right now.
+  ipcMain.handle("ai:models", (_e, provider?: AiProviderConfig) => listAiModels(provider));
 }
 
 // IPC for cloud sync + shared workspaces. All Supabase traffic stays in the

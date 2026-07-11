@@ -9,7 +9,7 @@ full control on demand.*
 
 > **Status:** the **desktop app runs today** from source — a local-first markdown
 > vault (Obsidian-style) with built-in, bring-your-own-model AI chat. Cloud sync,
-> the autonomous wiki agent, and the mobile app are on the [roadmap](plan/roadmap.md).
+> the always-on cloud agent, and the mobile app are on the [roadmap](plan/roadmap.md).
 
 ## Download
 
@@ -64,10 +64,11 @@ signing (and with it silent auto-update) is planned — see
 
 ## Why
 
-People are building powerful second brains with **Obsidian + Claude Code**, but it
-is hard to set up, local-only unless you self-host, can't run on a phone, and
-needs two separate apps. KestraVault collapses that into one app — and because it's
-open source and bring-your-own-model, **your notes and your keys stay yours.**
+People are building powerful AI-assisted second brains by pairing a notes app with
+a terminal coding agent, but that is hard to set up, local-only unless you
+self-host, can't run on a phone, and needs two separate apps. KestraVault collapses
+that into one app — with a structure **you** choose, and because it's open source
+and bring-your-own-model, **your notes and your keys stay yours.**
 
 ## What works today
 
@@ -76,10 +77,22 @@ open source and bring-your-own-model, **your notes and your keys stay yours.**
   Multiple vaults, Obsidian-style, with a switcher.
 - ✍️ **CodeMirror 6 editor** with live preview, wiki-links + backlinks, an outline,
   a graph view, quick-switcher, command palette, and a slash menu.
+- 🧭 **Your structure, AI-maintained.** Onboarding scaffolds the folders you pick
+  and writes the vault's **AI guide** (`.kestravault/instructions.md`) — purpose,
+  rules, and a vault map (index) the AI keeps current so it can find anything
+  without scanning every file. Editable in Settings → AI guide, with a one-click
+  "Optimize with AI" that reorganizes and re-indexes the vault (moves only —
+  the agent never deletes).
+- ⚡ **Vault skills:** *File this note*, *Tidy my vault*, *Reorganize my vault* —
+  plus your own custom skills, defined in Settings and run from the chat's `/` menu.
 - 🤖 **Bring-your-own-model AI**, built in. One UI, several providers:
   - **Claude Pro / Max subscription** — reuses your Claude.ai login like Claude
     Code does. No API key.
+  - **ChatGPT Plus / Pro subscription** — reuses your ChatGPT login via the
+    Codex CLI. No API key.
   - **Anthropic API**, **OpenAI**, **OpenRouter** — pay-as-you-go with your key.
+    Model lists refresh live from the provider, so new models appear the day
+    they ship.
   - **Local models** via **Ollama** or **LM Studio** — your notes never leave the
     machine.
   - **Any OpenAI-compatible endpoint** — just point a base URL at it.
@@ -102,14 +115,16 @@ pnpm install
 pnpm dev:desktop        # launches the Electron app
 ```
 
-On first launch KestraVault creates a vault at `~/KestraVault Vault` with a few starter
-notes. Open **Settings → AI model** to choose your provider.
+On first launch KestraVault creates an empty vault at `~/KestraVault Vault` and opens a
+short setup wizard that scaffolds the folders you pick and writes the vault's AI
+guide. Open **Settings → AI model** to choose your provider.
 
 ### Choosing your AI
 
 | Provider | Needs a key? | Notes |
 |---|---|---|
 | **Claude (Pro/Max)** | No | Sign in once: run `claude` in a terminal, then `/login`. Same OAuth as Claude Code. |
+| **ChatGPT (Plus/Pro)** | No | Install the Codex CLI (`npm i -g @openai/codex`), run `codex`, sign in with ChatGPT. |
 | **Anthropic / OpenAI / OpenRouter** | Yes | Paste your key in Settings; it's stored encrypted on your device. |
 | **Ollama / LM Studio** | No | Fully local + private. Start the local server, then pick your model. |
 | **Custom** | Optional | Any OpenAI-compatible `/chat/completions` endpoint. |

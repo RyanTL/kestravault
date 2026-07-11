@@ -1,13 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 
 // agentOps.ts reaches Electron transitively (vault.js / secrets.js) and pulls
-// in the Claude Agent SDK; the zone guard under test is pure, so stub those out.
-vi.mock("@anthropic-ai/claude-agent-sdk", () => ({ query: vi.fn() }));
+// in the Claude Agent SDK; the tool guard under test is pure, so stub those out.
+vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
+  query: vi.fn(),
+  createSdkMcpServer: vi.fn(() => ({})),
+  tool: vi.fn(),
+}));
 vi.mock("./vault.js", () => ({
   vaultRoot: () => "/tmp/vault",
   readTree: vi.fn(),
   readFile: vi.fn(),
   writeFile: vi.fn(),
+  renameEntry: vi.fn(),
   readPrivacyRules: vi.fn(),
 }));
 vi.mock("./secrets.js", () => ({
@@ -21,27 +26,30 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 
 const ROOT = "/tmp/vault";
 
-describe("isWritablePath — the agent's writable zones", () => {
-  it("allows wiki pages, the index and the log", () => {
-    expect(isWritablePath("wiki/concepts/ownership.md")).toBe(true);
-    expect(isWritablePath("wiki/sources/s-2026-07-01-x.md")).toBe(true);
-    expect(isWritablePath("index.md")).toBe(true);
-    expect(isWritablePath("log.md")).toBe(true);
+describe("isWritablePath — what the agent may write", () => {
+  it("allows notes anywhere in the user's structure", () => {
+    expect(isWritablePath("projects/roadmap.md")).toBe(true);
+    expect(isWritablePath("notes/journal.md")).toBe(true);
+    expect(isWritablePath("deeply/nested/idea.md")).toBe(true);
+    expect(isWritablePath("random.md")).toBe(true);
   });
 
-  it("blocks the immutable/human/meta zones", () => {
-    expect(isWritablePath("sources/s-2026-07-01-x.md")).toBe(false);
-    expect(isWritablePath("notes/journal.md")).toBe(false);
-    expect(isWritablePath(".kestravault/instructions.md")).toBe(false);
-    expect(isWritablePath("AGENTS.md")).toBe(false);
-    expect(isWritablePath("CLAUDE.md")).toBe(false);
-    expect(isWritablePath("random.md")).toBe(false);
+  it("allows the AI guide (the agent maintains its vault map)", () => {
+    expect(isWritablePath(".kestravault/instructions.md")).toBe(true);
+  });
+
+  it("blocks every other dotfile and app metadata", () => {
+    expect(isWritablePath(".kestravault/config.json")).toBe(false);
+    expect(isWritablePath(".kestravault/skills.json")).toBe(false);
+    expect(isWritablePath(".git/config")).toBe(false);
+    expect(isWritablePath("notes/.hidden.md")).toBe(false);
+    expect(isWritablePath("")).toBe(false);
   });
 });
 
-describe("checkToolUse — per-call zone enforcement", () => {
+describe("checkToolUse — per-call enforcement", () => {
   it("lets the agent read anywhere inside the vault", () => {
-    for (const p of [`${ROOT}/sources/a.md`, `${ROOT}/notes/b.md`, `${ROOT}/.kestravault/instructions.md`]) {
+    for (const p of [`${ROOT}/projects/a.md`, `${ROOT}/notes/b.md`, `${ROOT}/.kestravault/instructions.md`]) {
       expect(checkToolUse(ROOT, "Read", { file_path: p }).ok).toBe(true);
     }
   });
@@ -53,29 +61,43 @@ describe("checkToolUse — per-call zone enforcement", () => {
 
   it("refuses path traversal out of the vault", () => {
     const res = checkToolUse(ROOT, "Write", {
-      file_path: `${ROOT}/wiki/../../elsewhere/x.md`,
+      file_path: `${ROOT}/notes/../../elsewhere/x.md`,
       content: "",
     });
     expect(res.ok).toBe(false);
   });
 
-  it("allows writes only to wiki/, index.md and log.md", () => {
-    expect(checkToolUse(ROOT, "Write", { file_path: `${ROOT}/wiki/concepts/x.md` }).ok).toBe(true);
-    expect(checkToolUse(ROOT, "Edit", { file_path: `${ROOT}/index.md` }).ok).toBe(true);
-    expect(checkToolUse(ROOT, "Write", { file_path: `${ROOT}/sources/x.md` }).ok).toBe(false);
-    expect(checkToolUse(ROOT, "Edit", { file_path: `${ROOT}/notes/x.md` }).ok).toBe(false);
+  it("allows writes to notes and the guide, but not app metadata", () => {
+    expect(checkToolUse(ROOT, "Write", { file_path: `${ROOT}/projects/x.md` }).ok).toBe(true);
+    expect(checkToolUse(ROOT, "Edit", { file_path: `${ROOT}/notes/x.md` }).ok).toBe(true);
     expect(
-      checkToolUse(ROOT, "Write", { file_path: `${ROOT}/.kestravault/instructions.md` }).ok,
+      checkToolUse(ROOT, "Edit", { file_path: `${ROOT}/.kestravault/instructions.md` }).ok,
+    ).toBe(true);
+    expect(
+      checkToolUse(ROOT, "Write", { file_path: `${ROOT}/.kestravault/config.json` }).ok,
     ).toBe(false);
   });
 
   it("resolves relative tool paths against the vault root", () => {
-    const ok = checkToolUse(ROOT, "Write", { file_path: "wiki/topics/y.md" });
-    expect(ok).toEqual({ ok: true, action: "write", path: "wiki/topics/y.md" });
+    const ok = checkToolUse(ROOT, "Write", { file_path: "topics/y.md" });
+    expect(ok).toEqual({ ok: true, action: "write", path: "topics/y.md" });
+  });
+
+  it("validates moves: inside the vault, both ends writable", () => {
+    expect(checkToolUse(ROOT, "mcp__vault__move_note", { from: "a.md", to: "archive/a.md" })).toEqual(
+      { ok: true, action: "move", from: "a.md", to: "archive/a.md" },
+    );
+    expect(checkToolUse(ROOT, "mcp__vault__move_note", { from: "a.md" }).ok).toBe(false);
+    expect(
+      checkToolUse(ROOT, "mcp__vault__move_note", { from: "a.md", to: "/etc/x.md" }).ok,
+    ).toBe(false);
+    expect(
+      checkToolUse(ROOT, "mcp__vault__move_note", { from: ".kestravault/config.json", to: "x.md" }).ok,
+    ).toBe(false);
   });
 
   it("supports search tools scoped to the vault and rejects everything else", () => {
-    expect(checkToolUse(ROOT, "Glob", { pattern: "wiki/**/*.md" }).ok).toBe(true);
+    expect(checkToolUse(ROOT, "Glob", { pattern: "**/*.md" }).ok).toBe(true);
     expect(checkToolUse(ROOT, "Grep", { pattern: "ownership", path: ROOT }).ok).toBe(true);
     expect(checkToolUse(ROOT, "Glob", { pattern: "*", path: "/" }).ok).toBe(false);
     expect(checkToolUse(ROOT, "Bash", { command: "rm -rf /" }).ok).toBe(false);
@@ -84,7 +106,7 @@ describe("checkToolUse — per-call zone enforcement", () => {
 });
 
 describe("runAgentOp — privacy guard", () => {
-  it("rejects private ingest targets before starting the remote agent", async () => {
+  it("rejects private targets before starting the remote agent", async () => {
     vi.mocked(vault.readPrivacyRules).mockResolvedValue([
       {
         path: "notes/private.md",
@@ -100,7 +122,7 @@ describe("runAgentOp — privacy guard", () => {
 
     await runAgentOp(win as never, {
       requestId: "r1",
-      op: "ingest",
+      op: "file",
       targetPath: "notes/private.md",
       provider: { kind: "subscription" },
     });
@@ -109,6 +131,24 @@ describe("runAgentOp — privacy guard", () => {
     expect(send).toHaveBeenCalledWith(
       "ai:agent-event",
       expect.objectContaining({ requestId: "r1", type: "error" }),
+    );
+  });
+
+  it("rejects a custom skill with no instruction", async () => {
+    const send = vi.fn();
+    const win = { isDestroyed: () => false, webContents: { send } };
+
+    await runAgentOp(win as never, {
+      requestId: "r2",
+      op: "custom",
+      prompt: "   ",
+      provider: { kind: "subscription" },
+    });
+
+    expect(query).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith(
+      "ai:agent-event",
+      expect.objectContaining({ requestId: "r2", type: "error" }),
     );
   });
 });
