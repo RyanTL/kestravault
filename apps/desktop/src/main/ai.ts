@@ -497,6 +497,12 @@ export function friendly(kind: AiErrorKind, raw: string, provider: AiProviderCon
         ? "The Codex CLI isn’t installed. Install it (`npm install -g @openai/codex`), run `codex`, and sign in with your ChatGPT account."
         : "Not connected to your ChatGPT account. Open a terminal, run `codex`, and sign in with ChatGPT.";
     }
+  }
+  if (provider.kind === "openai-sub" && /newer version of codex/i.test(raw)) {
+    return (
+      "Your Codex CLI is too old for this model. Update it (`npm install -g @openai/codex@latest`) " +
+      "and try again — or pick “Default (Codex)” in the model picker to use whatever your CLI supports."
+    );
     return "The provider rejected the request — check your API key and base URL in Settings → AI model.";
   }
   if (kind === "rate_limit") {
