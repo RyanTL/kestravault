@@ -20,7 +20,7 @@ import { useWorkspace } from "@renderer/vault/useWorkspace";
 import { useBookmarks } from "@renderer/vault/useBookmarks";
 import { useAi, type AiRewrite } from "@renderer/vault/useAi";
 import { useChats } from "@renderer/vault/useChats";
-import { useSettings } from "@renderer/vault/useSettings";
+import { PROVIDERS, useSettings } from "@renderer/vault/useSettings";
 import { gruntModelFor } from "@renderer/vault/routing";
 import { stripFrontmatter } from "@renderer/vault/markdown";
 import { baseName, dirName, noteName } from "@renderer/vault/paths";
@@ -159,8 +159,8 @@ export default function App() {
     if (!showAi) setAiFull(false);
   }, [showAi]);
 
-  // When the AI provider/url/key changes, drop the cached connection status so
-  // the next probe (e.g. when the chat panel reopens) re-checks the new target.
+  // When the panel opens or its AI provider/url/key changes, drop the cached
+  // connection status and probe the active target while the chat is visible.
   // The key isn't in aiConfig (it lives encrypted in main), so keyVersion — which
   // bumps on every save/clear — stands in for "the key changed".
   const aiConfigSig = `${settings.aiConfig.kind}|${settings.aiConfig.providerId ?? ""}|${
@@ -168,7 +168,8 @@ export default function App() {
   }|${settings.keyVersion}`;
   useEffect(() => {
     ai.invalidate();
-  }, [aiConfigSig]);
+    if (showAi) void ai.checkStatus();
+  }, [aiConfigSig, showAi]);
 
   const views = useRef(new Map<string, EditorView | null>());
 
@@ -729,13 +730,13 @@ export default function App() {
             full={aiFull}
             onToggleFull={() => setAiFull((v) => !v)}
             model={settings.model}
-            models={settings.preset.models}
-            onModelChange={(id) => settings.setProviderField("model", id)}
+            providerId={settings.providerId}
+            providers={PROVIDERS}
+            onProviderModelChange={settings.setProviderModel}
             effort={settings.effort}
             onEffortChange={settings.setEffort}
             supportsEffort={settings.supportsEffort}
             providerLabel={settings.preset.label}
-            isSubscription={settings.preset.kind === "subscription"}
             aiIsLocal={aiIsLocal}
             agentCapable={settings.preset.kind !== "openai"}
             preset={settings.preset}

@@ -403,6 +403,19 @@ export function useSettings() {
     });
   }, []);
 
+  /** Switch provider and model as one composer action, avoiding an intermediate stale selection. */
+  const setProviderModel = useCallback((providerId: string, model: string) => {
+    setState((s) => {
+      const id = getPreset(providerId).id;
+      const cur = s.byProvider[id] ?? {};
+      return {
+        ...s,
+        providerId: id,
+        byProvider: { ...s.byProvider, [id]: { ...cur, model } },
+      };
+    });
+  }, []);
+
   // Save (non-empty) or clear (empty) the current provider's key. Round-trips to
   // the main process; the plaintext key never lands in React state or storage.
   const setKey = useCallback(
@@ -494,6 +507,7 @@ export function useSettings() {
     /** Whether an anon key is saved for the sync server. */
     hasSyncKey,
     setProvider,
+    setProviderModel,
     setProviderField,
     setKey,
     clearKey,
