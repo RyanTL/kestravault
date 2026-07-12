@@ -45,18 +45,18 @@ interface AIChatPanelProps {
   onClose: () => void;
   full: boolean;
   onToggleFull: () => void;
-  /** Current model + the suggestions for the active provider (from Settings). */
+  /** Active provider/model plus the complete catalogue for the unified picker. */
   model: string;
-  models: ModelOption[];
-  onModelChange: (id: string) => void;
+  activeModels: ModelOption[];
+  providerId: string;
+  providers: ProviderPreset[];
+  onProviderModelChange: (providerId: string, modelId: string) => void;
   /** Reasoning effort, its setter, and whether the provider honours it (Claude). */
   effort: EffortLevel;
   onEffortChange: (e: EffortLevel) => void;
   supportsEffort: boolean;
   /** Display name of the active provider. */
   providerLabel: string;
-  /** Which no-API-key login the provider uses, if any (drives the connect card). */
-  subscription: "claude" | "chatgpt" | null;
   /** Provider runs on the user's machine (Ollama / LM Studio) → Private notes are unrestricted. */
   aiIsLocal: boolean;
   /** Provider can run vault skills (tool-using agent ops): Claude sub or Anthropic API. */
@@ -102,13 +102,14 @@ export function AIChatPanel({
   full,
   onToggleFull,
   model,
-  models,
-  onModelChange,
+  activeModels,
+  providerId,
+  providers,
+  onProviderModelChange,
   effort,
   onEffortChange,
   supportsEffort,
   providerLabel,
-  subscription,
   aiIsLocal,
   agentCapable,
   preset,
@@ -132,7 +133,7 @@ export function AIChatPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  const { conn, status, checkStatus, recheck, stream, agentRun } = controller;
+  const { conn, recheck, stream, agentRun } = controller;
 
   // Built-in skills plus the user's own (stored in the vault as
   // .kestravault/skills.json, managed in Settings → AI guide). Re-read when
@@ -157,10 +158,6 @@ export function AIChatPanel({
     return isPrivateNote(activeContent) ? "cloud-ai-private" : "public";
   }, [activePath, activeContent, files]);
   const activeAiAccess = remoteAiAccessForPrivacy(activePrivacyMode, { aiIsLocal });
-
-  useEffect(() => {
-    void checkStatus();
-  }, [checkStatus]);
 
   const scrollToBottom = useCallback(() => {
     const el = scrollRef.current;
@@ -561,9 +558,6 @@ export function AIChatPanel({
       <div className="ai-scroll" ref={scrollRef}>
         {disconnected ? (
           <ConnectCard
-            status={status}
-            subscription={subscription}
-            providerLabel={providerLabel}
             onRecheck={() => void recheck()}
             onOpenSettings={onOpenSettings}
           />
@@ -727,28 +721,17 @@ export function AIChatPanel({
                     <AiIcon name="vault" /> All notes
                   </span>
                 )}
-                {models.length > 0 ? (
-                  <ComposerPicker
-                    className="ai-model"
-                    value={model}
-                    options={
-                      models.some((m) => m.id === model)
-                        ? models
-                        : [{ id: model, label: model || "default" }, ...models]
-                    }
-                    onChange={onModelChange}
-                    title={`Model · ${providerLabel}`}
-                  />
-                ) : (
-                  <button
-                    className="ai-picker-trigger ai-model"
-                    onClick={onOpenSettings}
-                    title="Set the model in Settings"
-                  >
-                    <span>{model || "Set model"}</span>
-                  </button>
-                )}
-                {supportsEffort ? <EffortPicker value={effort} onChange={onEffortChange} /> : null}
+                <ModelAndEffortPicker
+                  providerId={providerId}
+                  providers={providers}
+                  activeModels={activeModels}
+                  model={model}
+                  effort={effort}
+                  supportsEffort={supportsEffort}
+                  onProviderModelChange={onProviderModelChange}
+                  onEffortChange={onEffortChange}
+                  onOpenSettings={onOpenSettings}
+                />
               </div>
               {busy ? (
                 <button className="ai-send is-stop" onClick={stop} title="Stop">
@@ -772,46 +755,33 @@ export function AIChatPanel({
   );
 }
 
-function EffortPicker({
-  value,
-  onChange,
+function ModelAndEffortPicker({
+  providerId,
+  providers,
+  activeModels,
+  model,
+  effort,
+  supportsEffort,
+  onProviderModelChange,
+  onEffortChange,
+  onOpenSettings,
 }: {
-  value: EffortLevel;
-  onChange: (value: EffortLevel) => void;
-}) {
-  return (
-    <ComposerPicker
-      className="ai-effort"
-      value={value}
-      options={EFFORT_OPTIONS.map((option) => ({
-        id: option.id,
-        label: `${option.label} effort`,
-      }))}
-      onChange={onChange}
-      title="Reasoning effort — how hard the model thinks before replying"
-    />
-  );
-}
-
-function ComposerPicker<T extends string>({
-  className,
-  value,
-  options,
-  onChange,
-  title,
-}: {
-  className: string;
-  value: T;
-  options: { id: T; label: string }[];
-  onChange: (value: T) => void;
-  title: string;
+  providerId: string;
+  providers: ProviderPreset[];
+  activeModels: ModelOption[];
+  model: string;
+  effort: EffortLevel;
+  supportsEffort: boolean;
+  onProviderModelChange: (providerId: string, modelId: string) => void;
+  onEffortChange: (value: EffortLevel) => void;
+  onOpenSettings: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const selectedLabel = useMemo(() => {
-    const option = options.find((o) => o.id === value);
-    return option?.label ?? value;
-  }, [options, value]);
+  const activeProvider = providers.find((provider) => provider.id === providerId);
+  const visibleActiveModels = activeModels.length ? activeModels : (activeProvider?.models ?? []);
+  const selectedLabel = visibleActiveModels.find((option) => option.id === model)?.label ?? model;
+  const effortLabel = EFFORT_OPTIONS.find((option) => option.id === effort)?.label ?? effort;
 
   useEffect(() => {
     if (!open) return;
@@ -830,35 +800,99 @@ function ComposerPicker<T extends string>({
   }, [open]);
 
   return (
-    <div className={`ai-picker ${className}`} ref={ref}>
+    <div className="ai-picker ai-model" ref={ref}>
       <button
         type="button"
         className={`ai-picker-trigger${open ? " is-open" : ""}`}
-        title={title}
-        aria-haspopup="menu"
+        title="Choose provider, model, and reasoning effort"
+        aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        <span>{selectedLabel}</span>
+        <span>{selectedLabel || "Choose model"}</span>
+        {supportsEffort ? <span className="ai-model-effort">· {effortLabel}</span> : null}
         <AiIcon name="chevron" size={13} />
       </button>
       {open ? (
-        <div className="ai-picker-menu" role="menu">
-          {options.map((option) => (
+        <div className="ai-model-menu" role="dialog" aria-label="AI provider and model">
+          <div className="ai-model-menu-scroll">
+            {providers.map((provider) => {
+              const models = provider.id === providerId ? visibleActiveModels : provider.models;
+              return (
+                <section className="ai-model-provider" key={provider.id}>
+                  <div className="ai-model-provider-name">
+                    <span className="ai-provider-mark" aria-hidden>
+                      {provider.label.charAt(0)}
+                    </span>
+                    {provider.label}
+                  </div>
+                  {models.length ? (
+                    models.map((option) => {
+                      const selected = provider.id === providerId && option.id === model;
+                      return (
+                        <button
+                          key={option.id || "provider-default"}
+                          type="button"
+                          aria-pressed={selected}
+                          className={`ai-model-option${selected ? " is-active" : ""}`}
+                          onClick={() => {
+                            onProviderModelChange(provider.id, option.id);
+                            setOpen(false);
+                          }}
+                        >
+                          <span>{option.label}</span>
+                          {selected ? <span className="ai-model-check">✓</span> : null}
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <button
+                      type="button"
+                      className="ai-model-option is-setup"
+                      onClick={() => {
+                        setOpen(false);
+                        onOpenSettings();
+                      }}
+                    >
+                      Configure model…
+                    </button>
+                  )}
+                </section>
+              );
+            })}
+          </div>
+          <div className="ai-model-controls">
+            <div className="ai-model-control-row">
+              <span>Effort</span>
+              {supportsEffort ? (
+                <div className="ai-effort-options" role="group" aria-label="Reasoning effort">
+                  {EFFORT_OPTIONS.map((option) => (
+                    <button
+                      type="button"
+                      key={option.id}
+                      className={effort === option.id ? "is-active" : ""}
+                      aria-pressed={effort === option.id}
+                      onClick={() => onEffortChange(option.id)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <span className="ai-model-control-muted">Provider default</span>
+              )}
+            </div>
             <button
-              key={option.id}
               type="button"
-              role="menuitemradio"
-              aria-checked={option.id === value}
-              className={`ai-picker-option${option.id === value ? " is-active" : ""}`}
+              className="ai-model-settings"
               onClick={() => {
-                onChange(option.id);
                 setOpen(false);
+                onOpenSettings();
               }}
             >
-              {option.label}
+              Provider settings…
             </button>
-          ))}
+          </div>
         </div>
       ) : null}
     </div>
@@ -986,103 +1020,29 @@ function EmptyState({
 }
 
 function ConnectCard({
-  status,
-  subscription,
-  providerLabel,
   onRecheck,
   onOpenSettings,
 }: {
-  status: { detail?: string } | null;
-  subscription: "claude" | "chatgpt" | null;
-  providerLabel: string;
   onRecheck: () => void;
   onOpenSettings: () => void;
 }) {
-  const [copied, setCopied] = useState(false);
-  const command = subscription === "chatgpt" ? "codex" : "claude";
-  const copy = (): void => {
-    void navigator.clipboard.writeText(command).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
-  };
-
-  // Non-subscription providers (API key / local model) are configured in
-  // Settings, so point there instead of the terminal login flow.
-  if (!subscription) {
-    return (
-      <div className="ai-connect">
-        <AiAvatar size={40} />
-        <div className="ai-connect-title">Set up {providerLabel}</div>
-        <p className="ai-connect-text">
-          KestraVault is <strong>bring-your-own-model</strong>. Add your API key (or start your local
-          model) in Settings, then re-check the connection.
-        </p>
-        <div className="ai-connect-actions">
-          <button className="ai-btn-primary" onClick={onOpenSettings}>
-            Open AI settings
-          </button>
-          <button className="ai-btn-ghost" onClick={onRecheck}>
-            Re-check
-          </button>
-        </div>
-        {status?.detail ? <div className="ai-connect-detail">{status.detail}</div> : null}
-      </div>
-    );
-  }
-
   return (
     <div className="ai-connect">
       <AiAvatar size={40} />
-      <div className="ai-connect-title">
-        {subscription === "chatgpt" ? "Connect your ChatGPT account" : "Connect your Claude account"}
-      </div>
+      <div className="ai-connect-title">Connect an AI provider</div>
       <p className="ai-connect-text">
-        {subscription === "chatgpt" ? (
-          <>
-            KestraVault runs on your <strong>ChatGPT Plus/Pro subscription</strong> — no API key
-            needed. It reuses the same login as the Codex CLI.
-          </>
-        ) : (
-          <>
-            KestraVault runs on your <strong>Claude Pro/Max subscription</strong> — no API key
-            needed. It reuses the same login as Claude Code.
-          </>
-        )}
+        Choose the provider and model you want to use. Connect a subscription, add an API key, or
+        run a local model—KestraVault works with all three.
       </p>
-      {subscription === "chatgpt" ? (
-        <ol className="ai-connect-steps">
-          <li>
-            Install the Codex CLI: <code>npm install -g @openai/codex</code>
-          </li>
-          <li>
-            Run <code>codex</code> and choose <em>“Sign in with ChatGPT”</em>
-          </li>
-          <li>Come back here and re-check the connection</li>
-        </ol>
-      ) : (
-        <ol className="ai-connect-steps">
-          <li>
-            Open a Terminal and run <code>claude</code>
-          </li>
-          <li>
-            Type <code>/login</code> and choose <em>“Claude account with subscription”</em>
-          </li>
-          <li>Come back here and re-check the connection</li>
-        </ol>
-      )}
       <div className="ai-connect-actions">
-        <button className="ai-btn-primary" onClick={onRecheck}>
-          Re-check connection
+        <button className="ai-btn-primary" onClick={onOpenSettings}>
+          Choose a provider
         </button>
-        <button className="ai-btn-ghost" onClick={copy}>
-          {copied ? "Copied!" : `Copy “${command}”`}
+        <button className="ai-btn-ghost" onClick={onRecheck}>
+          Re-check
         </button>
       </div>
-      <button className="ai-connect-link" onClick={onOpenSettings}>
-        Use a different model →
-      </button>
-      {status?.detail ? <div className="ai-connect-detail">{status.detail}</div> : null}
+      <div className="ai-connect-detail">No AI provider is connected yet.</div>
     </div>
   );
 }

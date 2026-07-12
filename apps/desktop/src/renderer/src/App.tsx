@@ -20,7 +20,7 @@ import { useWorkspace } from "@renderer/vault/useWorkspace";
 import { useBookmarks } from "@renderer/vault/useBookmarks";
 import { useAi, type AiRewrite } from "@renderer/vault/useAi";
 import { useChats } from "@renderer/vault/useChats";
-import { useSettings } from "@renderer/vault/useSettings";
+import { PROVIDERS, useSettings } from "@renderer/vault/useSettings";
 import { gruntModelFor } from "@renderer/vault/routing";
 import { stripFrontmatter } from "@renderer/vault/markdown";
 import { baseName, dirName, noteName } from "@renderer/vault/paths";
@@ -730,19 +730,14 @@ export default function App() {
             full={aiFull}
             onToggleFull={() => setAiFull((v) => !v)}
             model={settings.model}
-            models={settings.models}
-            onModelChange={(id) => settings.setProviderField("model", id)}
+            activeModels={settings.models}
+            providerId={settings.providerId}
+            providers={PROVIDERS}
+            onProviderModelChange={settings.setProviderModel}
             effort={settings.effort}
             onEffortChange={settings.setEffort}
             supportsEffort={settings.supportsEffort}
             providerLabel={settings.preset.label}
-            subscription={
-              settings.preset.kind === "subscription"
-                ? "claude"
-                : settings.preset.kind === "openai-sub"
-                  ? "chatgpt"
-                  : null
-            }
             aiIsLocal={aiIsLocal}
             agentCapable={
               settings.preset.kind === "subscription" || settings.preset.kind === "anthropic"
