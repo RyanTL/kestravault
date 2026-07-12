@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { VaultInfo } from "@renderer/vault/types";
-import { ChevronDown, Check } from "lucide-react";
+import { ChevronDown, Check, Users } from "lucide-react";
 
 // The vault name in the file-explorer header doubles as a switcher (Obsidian's
 // "manage vaults" affordance): click it to drop down the list of known vaults,
@@ -22,6 +22,8 @@ interface VaultSwitcherProps {
   onOpenFolder: () => void;
   onCreate: () => void;
   onRemove: (path: string) => void;
+  sharedWorkspaceName: string | null;
+  onManageSharing: () => void;
 }
 
 export function VaultSwitcher({
@@ -31,6 +33,8 @@ export function VaultSwitcher({
   onOpenFolder,
   onCreate,
   onRemove,
+  sharedWorkspaceName,
+  onManageSharing,
 }: VaultSwitcherProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
@@ -104,6 +108,21 @@ export function VaultSwitcher({
               </li>
             ))}
           </ul>
+          <button
+            className="vault-menu-shared"
+            onClick={() => {
+              setOpen(false);
+              onManageSharing();
+            }}
+          >
+            <Users size={15} strokeWidth={1.7} aria-hidden />
+            <span className="vault-menu-shared-text">
+              <span className="vault-menu-shared-label">Shared vault</span>
+              <span className="vault-menu-shared-name">
+                {sharedWorkspaceName ?? "Set up collaboration"}
+              </span>
+            </span>
+          </button>
           <div className="vault-menu-divider" />
           <button
             className="vault-menu-action"
