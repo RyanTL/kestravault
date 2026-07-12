@@ -34,8 +34,11 @@ export interface ProviderPreset {
   keyPlaceholder?: string;
 }
 
-// The provider catalogue. Three wire "kinds" (subscription / anthropic / openai)
-// cover every entry; the OpenAI-compatible kind serves cloud and local alike.
+// The provider catalogue. Four wire "kinds" (subscription / openai-sub /
+// anthropic / openai) cover every entry; the OpenAI-compatible kind serves
+// cloud and local alike. The `models` lists are curated fallbacks — for API
+// providers the app also asks the provider itself what it can serve (live
+// discovery via GET /models), so new models show up without an app update.
 export const PROVIDERS: ProviderPreset[] = [
   {
     id: "claude-sub",
@@ -43,12 +46,26 @@ export const PROVIDERS: ProviderPreset[] = [
     kind: "subscription",
     needsKey: false,
     models: [
-      { id: "sonnet", label: "Sonnet 5" },
-      { id: "opus", label: "Opus 4.8" },
-      { id: "haiku", label: "Haiku 4.5" },
+      { id: "sonnet", label: "Sonnet (latest)" },
+      { id: "opus", label: "Opus (latest)" },
+      { id: "haiku", label: "Haiku (latest)" },
     ],
     defaultModel: "sonnet",
     blurb: "Reuses your Claude.ai login (like Claude Code). No API key — just sign in once.",
+  },
+  {
+    id: "chatgpt-sub",
+    label: "ChatGPT (Plus / Pro subscription)",
+    kind: "openai-sub",
+    needsKey: false,
+    models: [
+      { id: "", label: "Default (Codex)" },
+      { id: "gpt-5.6", label: "GPT-5.6" },
+      { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
+    ],
+    defaultModel: "",
+    blurb: "Reuses your ChatGPT login via the Codex CLI. No API key — sign in once with codex.",
+    setupUrl: "https://developers.openai.com/codex/cli",
   },
   {
     id: "anthropic",
@@ -57,9 +74,10 @@ export const PROVIDERS: ProviderPreset[] = [
     defaultBaseUrl: "https://api.anthropic.com",
     needsKey: true,
     models: [
-      { id: "claude-opus-4-8", label: "Claude Opus 4.8" },
       { id: "claude-sonnet-5", label: "Claude Sonnet 5" },
+      { id: "claude-opus-4-8", label: "Claude Opus 4.8" },
       { id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
+      { id: "claude-fable-5", label: "Claude Fable 5" },
     ],
     defaultModel: "claude-sonnet-5",
     blurb: "Pay-as-you-go Claude with your own Anthropic API key.",
@@ -73,12 +91,11 @@ export const PROVIDERS: ProviderPreset[] = [
     defaultBaseUrl: "https://api.openai.com/v1",
     needsKey: true,
     models: [
-      { id: "gpt-4o", label: "GPT-4o" },
-      { id: "gpt-4o-mini", label: "GPT-4o mini" },
-      { id: "gpt-4.1", label: "GPT-4.1" },
-      { id: "o4-mini", label: "o4-mini" },
+      { id: "gpt-5.6", label: "GPT-5.6" },
+      { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+      { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
     ],
-    defaultModel: "gpt-4o-mini",
+    defaultModel: "gpt-5.6-terra",
     blurb: "GPT models with your own OpenAI API key.",
     setupUrl: "https://platform.openai.com/api-keys",
     keyPlaceholder: "sk-…",
@@ -90,12 +107,11 @@ export const PROVIDERS: ProviderPreset[] = [
     defaultBaseUrl: "https://openrouter.ai/api/v1",
     needsKey: true,
     models: [
-      { id: "anthropic/claude-3.7-sonnet", label: "Claude 3.7 Sonnet" },
-      { id: "openai/gpt-4o", label: "GPT-4o" },
-      { id: "google/gemini-2.0-flash-001", label: "Gemini 2.0 Flash" },
-      { id: "meta-llama/llama-3.3-70b-instruct", label: "Llama 3.3 70B" },
+      { id: "anthropic/claude-sonnet-5", label: "Claude Sonnet 5" },
+      { id: "openai/gpt-5.6-terra", label: "GPT-5.6 Terra" },
+      { id: "google/gemini-3.5-flash", label: "Gemini 3.5 Flash" },
     ],
-    defaultModel: "anthropic/claude-3.7-sonnet",
+    defaultModel: "anthropic/claude-sonnet-5",
     blurb: "One key, hundreds of models across providers.",
     setupUrl: "https://openrouter.ai/keys",
     keyPlaceholder: "sk-or-…",
@@ -108,12 +124,12 @@ export const PROVIDERS: ProviderPreset[] = [
     needsKey: false,
     local: true,
     models: [
-      { id: "llama3.1", label: "Llama 3.1" },
-      { id: "qwen2.5", label: "Qwen 2.5" },
+      { id: "llama3.3", label: "Llama 3.3" },
+      { id: "qwen3", label: "Qwen 3" },
+      { id: "gemma3", label: "Gemma 3" },
       { id: "mistral", label: "Mistral" },
-      { id: "phi3", label: "Phi-3" },
     ],
-    defaultModel: "llama3.1",
+    defaultModel: "llama3.3",
     blurb: "Runs entirely on your machine — private and free. Needs the Ollama app running.",
     setupUrl: "https://ollama.com/download",
   },
@@ -386,8 +402,32 @@ export function useSettings() {
   // the main process resolves it from encrypted storage by providerId.
   const aiConfig: AiProviderConfig = useMemo(() => {
     if (preset.kind === "subscription") return { kind: "subscription" };
+    if (preset.kind === "openai-sub") return { kind: "openai-sub" };
     return { kind: preset.kind, providerId: preset.id, baseUrl };
   }, [preset.kind, preset.id, baseUrl]);
+
+  // Live model discovery: for API providers, ask the endpoint what it can
+  // serve right now (GET /models), so brand-new models appear without an app
+  // update. Curated preset lists remain the fallback (and the whole list for
+  // subscription providers, whose aliases track the newest models anyway).
+  const [liveModels, setLiveModels] = useState<ModelOption[]>([]);
+  useEffect(() => {
+    let alive = true;
+    setLiveModels([]);
+    if (aiConfig.kind === "subscription" || aiConfig.kind === "openai-sub") return;
+    void window.api.ai
+      .models(aiConfig)
+      .then((list) => {
+        if (alive) setLiveModels(list.slice(0, 25));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [aiConfig, keyVersion]);
+
+  // What the pickers offer: live list when discovery worked, curated otherwise.
+  const models = liveModels.length ? liveModels : preset.models;
 
   const setProvider = useCallback((id: string) => {
     setState((s) => ({ ...s, providerId: getPreset(id).id }));
@@ -482,6 +522,8 @@ export function useSettings() {
     providerId: state.providerId,
     preset,
     model,
+    /** Model options for the active provider (live discovery, curated fallback). */
+    models,
     baseUrl,
     hasKey,
     /** null = not yet known; false = stored unencrypted (no OS keychain). */

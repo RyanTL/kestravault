@@ -16,8 +16,8 @@ export interface ChatTurn {
   streaming?: boolean;
   error?: boolean;
   sources?: ChatSource[];
-  /** Files a vault skill (Ingest / Lint) created or updated during this turn. */
-  changed?: { path: string; op: "create" | "update" }[];
+  /** Files a vault skill created, updated, or moved during this turn. */
+  changed?: { path: string; op: "create" | "update" | "move"; from?: string }[];
   /** Transient "what the agent is doing now" line, shown while streaming. */
   working?: string;
 }

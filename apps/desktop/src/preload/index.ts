@@ -20,7 +20,7 @@ export interface AiChatMessage {
   role: AiChatRole;
   content: string;
 }
-export type AiProviderKind = "subscription" | "anthropic" | "openai";
+export type AiProviderKind = "subscription" | "openai-sub" | "anthropic" | "openai";
 export interface AiProviderConfig {
   kind: AiProviderKind;
   /** Which provider preset — the main process resolves the key from this. */
@@ -49,21 +49,25 @@ export interface AiStatus {
 }
 
 // ── Vault agent operations (mirror of main/agentOps.ts) ──
-export type AgentOpKind = "ingest" | "lint";
+export type AgentOpKind = "file" | "tidy" | "organize" | "custom";
 export interface AgentOpRequest {
   requestId: string;
   op: AgentOpKind;
   targetPath?: string;
+  /** The instruction for a `custom` op (a user-defined skill's prompt). */
+  prompt?: string;
   model?: string;
   provider?: AiProviderConfig;
 }
 export interface AgentChangedFile {
   path: string;
-  op: "create" | "update";
+  op: "create" | "update" | "move";
+  /** Previous path when `op` is "move". */
+  from?: string;
 }
 export type AgentOpEvent =
   | { requestId: string; type: "delta"; text: string }
-  | { requestId: string; type: "tool"; action: "read" | "search" | "write"; path?: string }
+  | { requestId: string; type: "tool"; action: "read" | "search" | "write" | "move"; path?: string }
   | { requestId: string; type: "done"; text: string; changed: AgentChangedFile[] }
   | { requestId: string; type: "error"; kind: AiErrorKind; message: string };
 
@@ -249,7 +253,7 @@ const api = {
     switch: (path: string): Promise<string> => ipcRenderer.invoke("vault:switch", path),
     /** Open a folder picker to add an existing folder as a vault. Null if cancelled. */
     add: (): Promise<string | null> => ipcRenderer.invoke("vault:add"),
-    /** Open a folder picker to create a new (seeded) vault. Null if cancelled. */
+    /** Open a folder picker to create a new (empty) vault. Null if cancelled. */
     createVault: (): Promise<string | null> => ipcRenderer.invoke("vault:create"),
     /** Forget a vault from the list (does not delete files). Returns the new list. */
     removeVault: (path: string): Promise<VaultInfo[]> => ipcRenderer.invoke("vault:remove", path),
@@ -285,13 +289,16 @@ const api = {
       ipcRenderer.invoke("ai:status", provider, force),
     /** Drop the cached status so the next `status()` re-probes. */
     resetStatus: (): Promise<void> => ipcRenderer.invoke("ai:reset-status"),
+    /** Models the provider can serve right now (live discovery, best-effort). */
+    models: (provider?: AiProviderConfig): Promise<{ id: string; label: string }[]> =>
+      ipcRenderer.invoke("ai:models", provider),
     /** Subscribe to streamed AI events. Returns an unsubscribe fn. */
     onEvent: (cb: (e: AiEvent) => void): (() => void) => {
       const listener = (_e: unknown, payload: AiEvent): void => cb(payload);
       ipcRenderer.on("ai:event", listener);
       return () => ipcRenderer.removeListener("ai:event", listener);
     },
-    /** Run a vault agent operation (Ingest / Lint). Streams via `onAgentEvent`;
+    /** Run a vault agent operation (a skill). Streams via `onAgentEvent`;
      *  cancellable with `cancel` (request ids are shared across both paths). */
     agent: (req: AgentOpRequest): Promise<void> => ipcRenderer.invoke("ai:agent", req),
     /** Subscribe to streamed agent-op events. Returns an unsubscribe fn. */

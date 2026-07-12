@@ -8,7 +8,7 @@ import type { ActivityContextPayload, ActivityItem } from "@renderer/env";
 // the page actions read at a glance and stay easy to tweak.
 
 export const ASSISTANT_PERSONA = [
-  "You are KestraVault AI, the assistant inside a personal markdown notes app (an Obsidian-style vault).",
+  "You are KestraVault AI, the assistant inside a personal markdown notes app.",
   "You help the user think, write, and find things across their own notes.",
   "Be concise and direct. Use clean Markdown (headings, bullet lists, **bold**) when it helps readability.",
   "When notes are provided as context, ground your answer in them and cite note titles in **bold** when relevant.",
@@ -187,42 +187,62 @@ export const PAGE_ACTIONS: PageAction[] = [
 
 // ---- Vault skills (agent operations) ---------------------------------------
 // Unlike page actions (single-turn prompts), a skill runs a real tool-using
-// agent in the main process that edits the vault — sandboxed to wiki/, index.md
-// and log.md (see main/agentOps.ts). Karpathy-pattern operations: Ingest, Lint.
+// agent in the main process that works directly on the vault, guided by the
+// AI guide in .kestravault/instructions.md (see main/agentOps.ts). Built-in
+// skills ship here; users add their own in Settings (stored in the vault as
+// .kestravault/skills.json — see vault/skills.ts).
+
+/** The agent operations the main process knows how to run (main/agentOps.ts). */
+export type VaultSkillOp = "file" | "tidy" | "organize" | "custom";
 
 export interface VaultSkill {
-  id: "ingest" | "lint";
+  /** Unique id — a built-in op name, or `custom-<slug>` for user skills. */
+  id: string;
+  /** Which agent operation runs; "custom" sends `prompt` as the instruction. */
+  op: VaultSkillOp;
   label: string;
   icon: string;
   /** One-line explanation shown in the skills menu. */
   description: string;
-  /** Needs an open note (the ingest target). */
+  /** Needs an open note (the target of the operation). */
   needsNote?: boolean;
   /** The user-visible line logged into the chat when the skill runs. */
   turnLabel: string;
+  /** The instruction for a custom skill (user-authored). */
+  prompt?: string;
 }
 
 export const VAULT_SKILLS: VaultSkill[] = [
   {
-    id: "ingest",
-    label: "Ingest this page",
+    id: "file",
+    op: "file",
+    label: "File this note",
     icon: "ingest",
-    description: "File this note into the wiki: pages, cross-links, index and log.",
+    description: "Put this note where it belongs: filed, cross-linked, and indexed.",
     needsNote: true,
-    turnLabel: "Ingest this page into the wiki",
+    turnLabel: "File this note into my vault",
   },
   {
-    id: "lint",
-    label: "Lint my wiki",
+    id: "tidy",
+    op: "tidy",
+    label: "Tidy my vault",
     icon: "lint",
-    description: "Health-check: contradictions, stale claims, orphans, missing links.",
-    turnLabel: "Lint the wiki",
+    description: "Health check: broken links, misplaced notes, a stale vault map.",
+    turnLabel: "Tidy the vault",
+  },
+  {
+    id: "organize",
+    op: "organize",
+    label: "Reorganize my vault",
+    icon: "organize",
+    description: "Restructure folders and notes for better retrieval, and refresh the vault map.",
+    turnLabel: "Reorganize the vault",
   },
 ];
 
 /** Shown when a skill is invoked on a provider that can't run agent ops. */
 export const SKILLS_NEED_CLAUDE =
-  "Vault skills (Ingest / Lint) run a tool-using agent, which needs **Claude** (the Pro/Max " +
+  "Vault skills run a tool-using agent, which currently needs **Claude** (the Pro/Max " +
   "subscription or an Anthropic API key). Your current provider still powers chat; switch " +
   "providers in Settings to use skills.";
 

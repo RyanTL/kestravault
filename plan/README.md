@@ -2,16 +2,17 @@
 
 > Working name: **KestraVault** (placeholder — see [open-questions.md](open-questions.md)).
 
-An open-source, **AI-first "second brain"**: a cloud agent maintains a living, interlinked **wiki** from your **raw sources** — *magic by default, full control on demand.* Native desktop + mobile, synced.
+An open-source, **AI-first "second brain"**: an AI agent organizes, cross-links, and indexes your markdown notes inside a structure **you** choose — *magic by default, full control on demand.* Native desktop + mobile, synced.
 
-It productizes Andrej Karpathy's ["LLM Wiki" pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) and removes its friction: no terminal, works on your phone, one app instead of two (Claude Code + Obsidian), syncs everywhere, and is approachable for non-technical people.
+> **2026-07-11 — structure redesign.** The product no longer imposes a fixed folder layout (the original three-zone `sources/wiki/notes` design described in the older docs below). Each vault's structure now comes from onboarding and lives in the vault's **AI guide** (`.kestravault/instructions.md`): purpose + working rules + a **vault map** (an index the agent keeps current so it never scans every file). Users who want a wiki-style setup can still build one — it's their choice. Older plan docs are kept as the decision log.
 
 ## The problem we solve
-People are building powerful second brains with **Obsidian + Claude Code**, but it:
+People are building powerful AI-assisted second brains by pairing a notes app with a terminal coding agent, but that setup:
 - is hard to set up for non-technical people,
 - is local-only unless you self-host,
-- can't run on a phone (no Claude Code on mobile),
-- requires two separate apps.
+- can't run on a phone,
+- requires two separate apps,
+- and typically forces someone else's organizational system.
 
 We collapse all of that into one synced, cross-platform, AI-first app.
 
@@ -37,4 +38,4 @@ We collapse all of that into one synced, cross-platform, AI-first app.
 - **Immediate next action:** scaffold the monorepo (`packages/core` + `apps/desktop` + `apps/mobile`) and prove a **hello-world ingest** (paste a source → agent edits land back as a clean change-set with working undo). This validates open question O7.
 
 ## One-line vision
-Drop in sources and ask questions; an AI agent compiles and continuously maintains an interlinked wiki — *integrate once, keep fresh* — across all your devices, with plain manual notes whenever you want them and the AI machinery hidden until you ask for it.
+Write notes and ask questions; an AI agent keeps your vault organized, interlinked, and indexed — *your structure, always findable* — across all your devices, with the AI machinery hidden until you ask for it.

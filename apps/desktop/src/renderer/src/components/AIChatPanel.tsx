@@ -19,11 +19,12 @@ import {
   timeContext,
 } from "@renderer/vault/aiPrompts";
 import { INSTRUCTIONS_PATH, brainContext } from "@renderer/vault/brain";
+import { readCustomSkills, toVaultSkill } from "@renderer/vault/skills";
 import { isPrivateNote } from "@renderer/vault/notePrivacy";
 import { noteName } from "@renderer/vault/paths";
 import { recordActivity } from "@renderer/vault/activityLog";
 import { rankNotes } from "@renderer/vault/search";
-import { EFFORT_OPTIONS, type ProviderPreset } from "@renderer/vault/useSettings";
+import { EFFORT_OPTIONS, type ModelOption, type ProviderPreset } from "@renderer/vault/useSettings";
 import { RUN_MODES, agentModelFor, isRoutable } from "@renderer/vault/routing";
 import {
   remoteAiAccessForPrivacy,
@@ -44,17 +45,18 @@ interface AIChatPanelProps {
   onClose: () => void;
   full: boolean;
   onToggleFull: () => void;
-  /** Active provider/model plus the complete catalogue for the unified picker. */
+  /** Current model + the suggestions for the active provider (from Settings). */
   model: string;
-  providerId: string;
-  providers: ProviderPreset[];
-  onProviderModelChange: (providerId: string, modelId: string) => void;
+  models: ModelOption[];
+  onModelChange: (id: string) => void;
   /** Reasoning effort, its setter, and whether the provider honours it (Claude). */
   effort: EffortLevel;
   onEffortChange: (e: EffortLevel) => void;
   supportsEffort: boolean;
   /** Display name of the active provider. */
   providerLabel: string;
+  /** Which no-API-key login the provider uses, if any (drives the connect card). */
+  subscription: "claude" | "chatgpt" | null;
   /** Provider runs on the user's machine (Ollama / LM Studio) → Private notes are unrestricted. */
   aiIsLocal: boolean;
   /** Provider can run vault skills (tool-using agent ops): Claude sub or Anthropic API. */
@@ -100,13 +102,13 @@ export function AIChatPanel({
   full,
   onToggleFull,
   model,
-  providerId,
-  providers,
-  onProviderModelChange,
+  models,
+  onModelChange,
   effort,
   onEffortChange,
   supportsEffort,
   providerLabel,
+  subscription,
   aiIsLocal,
   agentCapable,
   preset,
@@ -130,7 +132,23 @@ export function AIChatPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  const { conn, recheck, stream, agentRun } = controller;
+  const { conn, status, checkStatus, recheck, stream, agentRun } = controller;
+
+  // Built-in skills plus the user's own (stored in the vault as
+  // .kestravault/skills.json, managed in Settings → AI guide). Re-read when
+  // the vault's files change so edits made in Settings show up immediately.
+  const [customSkills, setCustomSkills] = useState<VaultSkill[]>([]);
+  useEffect(() => {
+    let alive = true;
+    void readCustomSkills().then((list) => {
+      if (alive) setCustomSkills(list.map(toVaultSkill));
+    });
+    return () => {
+      alive = false;
+    };
+  }, [files]);
+  const allSkills = useMemo(() => [...VAULT_SKILLS, ...customSkills], [customSkills]);
+
   const activeChat = chats.activeChat;
   const turns = activeChat.turns;
   const activePrivacyMode: PrivacyMode = useMemo(() => {
@@ -139,6 +157,10 @@ export function AIChatPanel({
     return isPrivateNote(activeContent) ? "cloud-ai-private" : "public";
   }, [activePath, activeContent, files]);
   const activeAiAccess = remoteAiAccessForPrivacy(activePrivacyMode, { aiIsLocal });
+
+  useEffect(() => {
+    void checkStatus();
+  }, [checkStatus]);
 
   const scrollToBottom = useCallback(() => {
     const el = scrollRef.current;
@@ -279,9 +301,9 @@ export function AIChatPanel({
     ],
   );
 
-  // Run a vault skill (Ingest / Lint): a tool-using agent run in the main
-  // process, streamed into the chat like a normal turn plus a live "working"
-  // line and, at the end, chips for every file it created or updated.
+  // Run a vault skill: a tool-using agent run in the main process, streamed
+  // into the chat like a normal turn plus a live "working" line and, at the
+  // end, chips for every file it created, updated, or moved.
   const runSkill = useCallback(
     (skill: VaultSkill) => {
       if (busy) return;
@@ -313,7 +335,7 @@ export function AIChatPanel({
         role: "assistant",
         content: "",
         streaming: true,
-        working: "Reading brain instructions…",
+        working: "Reading the vault guide…",
       };
       chats.updateTurns(chatId, (prev) => [...prev, userTurn, aTurn]);
       setBusy(true);
@@ -332,8 +354,12 @@ export function AIChatPanel({
       // mode; non-Claude providers have no ladder and keep the chat model.
       const runModel = agentModelFor(preset, model, runMode);
       const handle = agentRun(
-        skill.id,
-        { targetPath: skill.needsNote ? (activePath ?? undefined) : undefined, model: runModel },
+        skill.op,
+        {
+          targetPath: skill.needsNote ? (activePath ?? undefined) : undefined,
+          model: runModel,
+          prompt: skill.prompt,
+        },
         {
           onDelta: (delta) =>
             chats.updateTurns(chatId, (prev) =>
@@ -344,9 +370,11 @@ export function AIChatPanel({
               working:
                 action === "write"
                   ? `Editing ${path}…`
-                  : action === "read"
-                    ? `Reading ${path ?? "the vault"}…`
-                    : "Searching the vault…",
+                  : action === "move"
+                    ? `Moving ${path}…`
+                    : action === "read"
+                      ? `Reading ${path ?? "the vault"}…`
+                      : "Searching the vault…",
             }),
           onDone: (fullText, changed) => {
             setBusy(false);
@@ -420,11 +448,11 @@ export function AIChatPanel({
   }, [input]);
   const slashSkills = useMemo(() => {
     if (slashQuery === null) return [] as VaultSkill[];
-    if (slashQuery === "") return VAULT_SKILLS;
-    return VAULT_SKILLS.filter(
+    if (slashQuery === "") return allSkills;
+    return allSkills.filter(
       (s) => s.id.includes(slashQuery) || s.label.toLowerCase().includes(slashQuery),
     );
-  }, [slashQuery]);
+  }, [slashQuery, allSkills]);
   const slashOpen = slashQuery !== null && slashSkills.length > 0;
   useEffect(() => setSlashActive(0), [slashQuery]);
 
@@ -445,10 +473,10 @@ export function AIChatPanel({
   useEffect(() => {
     if (skillReq && skillReq.token !== lastSkill.current) {
       lastSkill.current = skillReq.token;
-      const skill = VAULT_SKILLS.find((s) => s.id === skillReq.id);
+      const skill = allSkills.find((s) => s.id === skillReq.id);
       if (skill) runSkillRef.current(skill);
     }
-  }, [skillReq]);
+  }, [skillReq, allSkills]);
 
   const onComposerKey = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
     if (slashOpen) {
@@ -533,6 +561,9 @@ export function AIChatPanel({
       <div className="ai-scroll" ref={scrollRef}>
         {disconnected ? (
           <ConnectCard
+            status={status}
+            subscription={subscription}
+            providerLabel={providerLabel}
             onRecheck={() => void recheck()}
             onOpenSettings={onOpenSettings}
           />
@@ -541,6 +572,7 @@ export function AIChatPanel({
             checking={conn === "checking" || conn === "unknown"}
             providerLabel={providerLabel}
             hasNote={!!activePath}
+            skills={allSkills}
             onAction={(prompt) => void send(prompt, { forcePage: true })}
             onSuggest={(q) => {
               setScope("vault");
@@ -575,12 +607,18 @@ export function AIChatPanel({
                         <span className="ai-sources-label">Changed files</span>
                         {t.changed.map((c) => (
                           <button
-                            key={c.path}
+                            key={`${c.op}-${c.path}`}
                             className="ai-source-chip"
                             onClick={() => onOpenNote(c.path)}
-                            title={`${c.op === "create" ? "Created" : "Updated"} ${c.path}`}
+                            title={
+                              c.op === "create"
+                                ? `Created ${c.path}`
+                                : c.op === "move"
+                                  ? `Moved ${c.from ?? "?"} → ${c.path}`
+                                  : `Updated ${c.path}`
+                            }
                           >
-                            <AiIcon name="doc" /> {c.op === "create" ? "+ " : ""}
+                            <AiIcon name="doc" /> {c.op === "create" ? "+ " : c.op === "move" ? "→ " : ""}
                             {c.path}
                           </button>
                         ))}
@@ -618,7 +656,7 @@ export function AIChatPanel({
                   className="ai-slash-head"
                   title={
                     agentCapable
-                      ? "Vault skills — agent operations on your wiki"
+                      ? "Vault skills — agent operations on your notes. Add your own in Settings → AI guide."
                       : "Vault skills need Claude (subscription or Anthropic API)"
                   }
                 >
@@ -689,16 +727,28 @@ export function AIChatPanel({
                     <AiIcon name="vault" /> All notes
                   </span>
                 )}
-                <ModelAndEffortPicker
-                  providerId={providerId}
-                  providers={providers}
-                  model={model}
-                  effort={effort}
-                  supportsEffort={supportsEffort}
-                  onProviderModelChange={onProviderModelChange}
-                  onEffortChange={onEffortChange}
-                  onOpenSettings={onOpenSettings}
-                />
+                {models.length > 0 ? (
+                  <ComposerPicker
+                    className="ai-model"
+                    value={model}
+                    options={
+                      models.some((m) => m.id === model)
+                        ? models
+                        : [{ id: model, label: model || "default" }, ...models]
+                    }
+                    onChange={onModelChange}
+                    title={`Model · ${providerLabel}`}
+                  />
+                ) : (
+                  <button
+                    className="ai-picker-trigger ai-model"
+                    onClick={onOpenSettings}
+                    title="Set the model in Settings"
+                  >
+                    <span>{model || "Set model"}</span>
+                  </button>
+                )}
+                {supportsEffort ? <EffortPicker value={effort} onChange={onEffortChange} /> : null}
               </div>
               {busy ? (
                 <button className="ai-send is-stop" onClick={stop} title="Stop">
@@ -722,31 +772,46 @@ export function AIChatPanel({
   );
 }
 
-function ModelAndEffortPicker({
-  providerId,
-  providers,
-  model,
-  effort,
-  supportsEffort,
-  onProviderModelChange,
-  onEffortChange,
-  onOpenSettings,
+function EffortPicker({
+  value,
+  onChange,
 }: {
-  providerId: string;
-  providers: ProviderPreset[];
-  model: string;
-  effort: EffortLevel;
-  supportsEffort: boolean;
-  onProviderModelChange: (providerId: string, modelId: string) => void;
-  onEffortChange: (value: EffortLevel) => void;
-  onOpenSettings: () => void;
+  value: EffortLevel;
+  onChange: (value: EffortLevel) => void;
+}) {
+  return (
+    <ComposerPicker
+      className="ai-effort"
+      value={value}
+      options={EFFORT_OPTIONS.map((option) => ({
+        id: option.id,
+        label: `${option.label} effort`,
+      }))}
+      onChange={onChange}
+      title="Reasoning effort — how hard the model thinks before replying"
+    />
+  );
+}
+
+function ComposerPicker<T extends string>({
+  className,
+  value,
+  options,
+  onChange,
+  title,
+}: {
+  className: string;
+  value: T;
+  options: { id: T; label: string }[];
+  onChange: (value: T) => void;
+  title: string;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const activeProvider = providers.find((provider) => provider.id === providerId);
-  const selectedLabel =
-    activeProvider?.models.find((option) => option.id === model)?.label ?? model;
-  const effortLabel = EFFORT_OPTIONS.find((option) => option.id === effort)?.label ?? effort;
+  const selectedLabel = useMemo(() => {
+    const option = options.find((o) => o.id === value);
+    return option?.label ?? value;
+  }, [options, value]);
 
   useEffect(() => {
     if (!open) return;
@@ -765,96 +830,35 @@ function ModelAndEffortPicker({
   }, [open]);
 
   return (
-    <div className="ai-picker ai-model" ref={ref}>
+    <div className={`ai-picker ${className}`} ref={ref}>
       <button
         type="button"
         className={`ai-picker-trigger${open ? " is-open" : ""}`}
-        title="Choose provider, model, and reasoning effort"
-        aria-haspopup="dialog"
+        title={title}
+        aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        <span>{selectedLabel || "Choose model"}</span>
-        {supportsEffort ? <span className="ai-model-effort">· {effortLabel}</span> : null}
+        <span>{selectedLabel}</span>
         <AiIcon name="chevron" size={13} />
       </button>
       {open ? (
-        <div className="ai-model-menu" role="dialog" aria-label="AI provider and model">
-          <div className="ai-model-menu-scroll">
-            {providers.map((provider) => (
-              <section className="ai-model-provider" key={provider.id}>
-                <div className="ai-model-provider-name">
-                  <span className="ai-provider-mark" aria-hidden>
-                    {provider.label.charAt(0)}
-                  </span>
-                  {provider.label}
-                </div>
-                {provider.models.length ? (
-                  provider.models.map((option) => {
-                    const selected = provider.id === providerId && option.id === model;
-                    return (
-                      <button
-                        key={option.id}
-                        type="button"
-                        aria-pressed={selected}
-                        className={`ai-model-option${selected ? " is-active" : ""}`}
-                        onClick={() => {
-                          onProviderModelChange(provider.id, option.id);
-                          setOpen(false);
-                        }}
-                      >
-                        <span>{option.label}</span>
-                        {selected ? <span className="ai-model-check">✓</span> : null}
-                      </button>
-                    );
-                  })
-                ) : (
-                  <button
-                    type="button"
-                    className="ai-model-option is-setup"
-                    onClick={() => {
-                      setOpen(false);
-                      onOpenSettings();
-                    }}
-                  >
-                    Configure model…
-                  </button>
-                )}
-              </section>
-            ))}
-          </div>
-          <div className="ai-model-controls">
-            <div className="ai-model-control-row">
-              <span>Effort</span>
-              {supportsEffort ? (
-                <div className="ai-effort-options" role="group" aria-label="Reasoning effort">
-                  {EFFORT_OPTIONS.map((option) => (
-                    <button
-                      type="button"
-                      key={option.id}
-                      className={effort === option.id ? "is-active" : ""}
-                      aria-pressed={effort === option.id}
-                      onClick={() => onEffortChange(option.id)}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <span className="ai-model-control-muted">Provider default</span>
-              )}
-            </div>
+        <div className="ai-picker-menu" role="menu">
+          {options.map((option) => (
             <button
+              key={option.id}
               type="button"
-              className="ai-model-settings"
+              role="menuitemradio"
+              aria-checked={option.id === value}
+              className={`ai-picker-option${option.id === value ? " is-active" : ""}`}
               onClick={() => {
+                onChange(option.id);
                 setOpen(false);
-                onOpenSettings();
               }}
             >
-              Provider settings…
+              {option.label}
             </button>
-          </div>
+          ))}
         </div>
       ) : null}
     </div>
@@ -931,6 +935,7 @@ function EmptyState({
   checking,
   providerLabel,
   hasNote,
+  skills: allSkills,
   onAction,
   onSuggest,
   onSkill,
@@ -938,11 +943,12 @@ function EmptyState({
   checking: boolean;
   providerLabel: string;
   hasNote: boolean;
+  skills: VaultSkill[];
   onAction: (prompt: string) => void;
   onSuggest: (q: string) => void;
   onSkill: (skill: VaultSkill) => void;
 }) {
-  const skills = VAULT_SKILLS.filter((s) => !s.needsNote || hasNote);
+  const skills = allSkills.filter((s) => !s.needsNote || hasNote).slice(0, 4);
   return (
     <div className="ai-empty">
       <AiAvatar size={40} />
@@ -980,29 +986,103 @@ function EmptyState({
 }
 
 function ConnectCard({
+  status,
+  subscription,
+  providerLabel,
   onRecheck,
   onOpenSettings,
 }: {
+  status: { detail?: string } | null;
+  subscription: "claude" | "chatgpt" | null;
+  providerLabel: string;
   onRecheck: () => void;
   onOpenSettings: () => void;
 }) {
+  const [copied, setCopied] = useState(false);
+  const command = subscription === "chatgpt" ? "codex" : "claude";
+  const copy = (): void => {
+    void navigator.clipboard.writeText(command).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
+  // Non-subscription providers (API key / local model) are configured in
+  // Settings, so point there instead of the terminal login flow.
+  if (!subscription) {
+    return (
+      <div className="ai-connect">
+        <AiAvatar size={40} />
+        <div className="ai-connect-title">Set up {providerLabel}</div>
+        <p className="ai-connect-text">
+          KestraVault is <strong>bring-your-own-model</strong>. Add your API key (or start your local
+          model) in Settings, then re-check the connection.
+        </p>
+        <div className="ai-connect-actions">
+          <button className="ai-btn-primary" onClick={onOpenSettings}>
+            Open AI settings
+          </button>
+          <button className="ai-btn-ghost" onClick={onRecheck}>
+            Re-check
+          </button>
+        </div>
+        {status?.detail ? <div className="ai-connect-detail">{status.detail}</div> : null}
+      </div>
+    );
+  }
+
   return (
     <div className="ai-connect">
       <AiAvatar size={40} />
-      <div className="ai-connect-title">Connect an AI provider</div>
+      <div className="ai-connect-title">
+        {subscription === "chatgpt" ? "Connect your ChatGPT account" : "Connect your Claude account"}
+      </div>
       <p className="ai-connect-text">
-        Choose the provider and model you want to use. Connect a subscription, add an API key, or
-        run a local model—KestraVault works with all three.
+        {subscription === "chatgpt" ? (
+          <>
+            KestraVault runs on your <strong>ChatGPT Plus/Pro subscription</strong> — no API key
+            needed. It reuses the same login as the Codex CLI.
+          </>
+        ) : (
+          <>
+            KestraVault runs on your <strong>Claude Pro/Max subscription</strong> — no API key
+            needed. It reuses the same login as Claude Code.
+          </>
+        )}
       </p>
+      {subscription === "chatgpt" ? (
+        <ol className="ai-connect-steps">
+          <li>
+            Install the Codex CLI: <code>npm install -g @openai/codex</code>
+          </li>
+          <li>
+            Run <code>codex</code> and choose <em>“Sign in with ChatGPT”</em>
+          </li>
+          <li>Come back here and re-check the connection</li>
+        </ol>
+      ) : (
+        <ol className="ai-connect-steps">
+          <li>
+            Open a Terminal and run <code>claude</code>
+          </li>
+          <li>
+            Type <code>/login</code> and choose <em>“Claude account with subscription”</em>
+          </li>
+          <li>Come back here and re-check the connection</li>
+        </ol>
+      )}
       <div className="ai-connect-actions">
-        <button className="ai-btn-primary" onClick={onOpenSettings}>
-          Choose a provider
+        <button className="ai-btn-primary" onClick={onRecheck}>
+          Re-check connection
         </button>
-        <button className="ai-btn-ghost" onClick={onRecheck}>
-          Re-check
+        <button className="ai-btn-ghost" onClick={copy}>
+          {copied ? "Copied!" : `Copy “${command}”`}
         </button>
       </div>
-      <div className="ai-connect-detail">No AI provider is connected yet.</div>
+      <button className="ai-connect-link" onClick={onOpenSettings}>
+        Use a different model →
+      </button>
+      {status?.detail ? <div className="ai-connect-detail">{status.detail}</div> : null}
     </div>
   );
 }

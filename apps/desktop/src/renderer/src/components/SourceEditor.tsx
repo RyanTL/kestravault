@@ -36,7 +36,7 @@ interface SourceEditorProps {
   aiIsLocal: boolean;
   /** Effective privacy for the open note. */
   notePrivacyMode: PrivacyMode;
-  /** Run a vault skill (Ingest / Lint) chosen from the "/" menu's Actions group. */
+  /** Run a vault skill chosen from the "/" menu's Actions group. */
   onRunSkill?: (id: string) => void;
 }
 

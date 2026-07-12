@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { sourceFilename } from "./filenames.js";
 
 describe("sourceFilename", () => {
-  it("builds a Karpathy-style filename from a date string", () => {
+  it("builds a dated source filename from a date string", () => {
     expect(sourceFilename("Intro to Rust ownership", "2026-06-27")).toBe(
       "s-2026-06-27-intro-to-rust-ownership.md",
     );

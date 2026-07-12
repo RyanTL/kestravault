@@ -3,13 +3,20 @@ import { existsSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, relative, isAbsolute, sep } from "node:path";
-import { query, type Options, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+import {
+  createSdkMcpServer,
+  query,
+  tool,
+  type Options,
+  type SDKMessage,
+} from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
 import { parseFrontmatter, resolveEffectivePrivacy, type PrivacyRule } from "@kestravault/core";
 import {
-  vaultRoot,
   readTree,
   readFile,
   writeFile,
+  renameEntry,
   readPrivacyRules,
   type VaultNode,
 } from "./vault.js";
@@ -23,43 +30,53 @@ import {
 import { getSecret } from "./secrets.js";
 import { resolveClaudeExecutable } from "./claudeBinary.js";
 
-// ── Vault agent operations (Ingest / Lint) ───────────────────────────────────
+// ── Vault agent operations (skills) ──────────────────────────────────────────
 // Unlike the chat path (single turn, no tools — ai.ts), an agent op is a real
-// multi-turn Claude Agent SDK run with file tools enabled, so the AI can
-// actually maintain the wiki: read the source, write/update wiki pages, refresh
-// index.md, append to log.md.
+// multi-turn Claude Agent SDK run with file tools enabled, so the AI can work
+// on the vault directly: file a note, tidy the structure, reorganize folders,
+// or run a user-written custom skill. There is no imposed layout — the agent
+// follows the vault's own AI guide (.kestravault/instructions.md) and keeps
+// the guide's Vault map (the index) current so future runs navigate without
+// scanning every file.
 //
-// Safety model (the three zones from plan/data-model.md, enforced here):
+// Safety model, enforced here:
 //   read   — anywhere inside the vault, nothing outside it
-//   write  — ONLY wiki/**, index.md, log.md
-//   never  — sources/ (immutable), notes/ (human-owned), .kestravault/ (the agent
-//            may not rewrite its own instructions), AGENTS.md / CLAUDE.md
+//   write  — any note in the vault, plus .kestravault/instructions.md (the
+//            guide's index sections); never other dotfiles or app config
+//   move   — via a dedicated move_note tool (rename only, nothing is deleted)
+//   never  — private/local-only notes (excluded from the workspace entirely)
 // Enforced via canUseTool with permissionMode "default": every tool call is
 // routed through checkToolUse below; Bash/network tools are disallowed outright.
+// The run happens in a temp copy of the vault; changes are committed back only
+// when it finishes (or is cancelled by the user).
 //
 // Providers: needs the Claude Agent SDK runtime, so it runs on the Claude
-// subscription (OAuth) or an Anthropic API key. OpenAI-compatible providers
-// keep the chat features but can't run agent ops (the renderer gates this).
+// subscription (OAuth) or an Anthropic API key. Other providers keep the chat
+// features but can't run agent ops (the renderer gates this).
 
-export type AgentOpKind = "ingest" | "lint";
+export type AgentOpKind = "file" | "tidy" | "organize" | "custom";
 
 export interface AgentOpRequest {
   requestId: string;
   op: AgentOpKind;
-  /** Vault-relative path of the note to ingest (required for `ingest`). */
+  /** Vault-relative path of the note the op targets (required for `file`). */
   targetPath?: string;
+  /** The instruction for a `custom` op (a user-defined skill's prompt). */
+  prompt?: string;
   model?: string;
   provider?: AiProviderConfig;
 }
 
 export interface ChangedFile {
   path: string;
-  op: "create" | "update";
+  op: "create" | "update" | "move";
+  /** Previous path when `op` is "move". */
+  from?: string;
 }
 
 export type AgentOpEvent =
   | { requestId: string; type: "delta"; text: string }
-  | { requestId: string; type: "tool"; action: "read" | "search" | "write"; path?: string }
+  | { requestId: string; type: "tool"; action: "read" | "search" | "write" | "move"; path?: string }
   | { requestId: string; type: "done"; text: string; changed: ChangedFile[] }
   | { requestId: string; type: "error"; kind: AiErrorKind; message: string };
 
@@ -67,6 +84,10 @@ export type AgentOpEvent =
 
 const READ_TOOLS = new Set(["Read", "Glob", "Grep"]);
 const WRITE_TOOLS = new Set(["Write", "Edit"]);
+const MOVE_TOOL = "mcp__vault__move_note";
+
+/** The one dotfile the agent may edit: the AI guide (it owns the vault map). */
+const GUIDE_PATH = ".kestravault/instructions.md";
 
 /** Vault-relative POSIX path if `p` is inside `root`, else null. */
 function relIn(root: string, p: string): string | null {
@@ -77,17 +98,22 @@ function relIn(root: string, p: string): string | null {
   return rel.split(sep).join("/");
 }
 
-/** Whether a vault-relative path is one the agent may write. */
+/** Whether a vault-relative path is one the agent may write or move. The
+ *  structure is the user's own, so everything is fair game except app
+ *  metadata: dotfiles/dotfolders stay read-only, with the single exception of
+ *  the AI guide, whose index sections the agent maintains. */
 export function isWritablePath(rel: string): boolean {
-  if (rel === "index.md" || rel === "log.md") return true;
-  return rel.startsWith("wiki/") && rel !== "wiki/";
+  if (!rel) return false;
+  if (rel === GUIDE_PATH) return true;
+  return !rel.split("/").some((seg) => seg.startsWith("."));
 }
 
 export type ToolCheck =
   | { ok: true; action: "read" | "search" | "write"; path?: string }
+  | { ok: true; action: "move"; from: string; to: string }
   | { ok: false; reason: string };
 
-/** Validate one tool call against the vault's zone rules. Pure — unit-tested. */
+/** Validate one tool call against the vault's rules. Pure — unit-tested. */
 export function checkToolUse(
   root: string,
   toolName: string,
@@ -116,11 +142,26 @@ export function checkToolUse(
       return {
         ok: false,
         reason:
-          `"${rel}" is not writable. You may only write wiki/**, index.md and log.md — ` +
-          "sources/ is immutable, notes/ is human-owned, and .kestravault/ holds your instructions.",
+          `"${rel}" is not writable. Notes anywhere in the vault are, and so is the AI guide ` +
+          `(${GUIDE_PATH}) — but other app metadata and dotfiles are read-only.`,
       };
     }
     return { ok: true, action: "write", path: rel };
+  }
+
+  if (toolName === MOVE_TOOL) {
+    const from = pathArg("from");
+    const to = pathArg("to");
+    if (!from || !to) return { ok: false, reason: "move_note needs both `from` and `to`." };
+    const relFrom = relIn(root, from);
+    const relTo = relIn(root, to);
+    if (relFrom === null || relFrom === "" || relTo === null || relTo === "") {
+      return { ok: false, reason: "Moves must stay inside the vault." };
+    }
+    if (!isWritablePath(relFrom) || !isWritablePath(relTo)) {
+      return { ok: false, reason: "Dotfiles and app metadata cannot be moved." };
+    }
+    return { ok: true, action: "move", from: relFrom, to: relTo };
   }
 
   return { ok: false, reason: `The ${toolName} tool is not available in vault operations.` };
@@ -184,7 +225,6 @@ async function readFrontmatterPrivate(relPath: string): Promise<boolean> {
 }
 
 async function buildAgentWorkspace(): Promise<AgentWorkspace> {
-  const realRoot = vaultRoot();
   const tempRoot = await fs.mkdtemp(join(tmpdir(), "kestravault-agent-"));
   const tree = await readTree();
   const blocked = blockedPaths(tree);
@@ -200,7 +240,7 @@ async function buildAgentWorkspace(): Promise<AgentWorkspace> {
     await writeTemp(file.path, await readFile(file.path));
   }
   try {
-    await writeTemp(".kestravault/instructions.md", await readFile(".kestravault/instructions.md"));
+    await writeTemp(GUIDE_PATH, await readFile(GUIDE_PATH));
   } catch {
     // A not-yet-onboarded vault can still run with the base prompt.
   }
@@ -210,16 +250,31 @@ async function buildAgentWorkspace(): Promise<AgentWorkspace> {
     blocked,
     cleanup: () => fs.rm(tempRoot, { recursive: true, force: true }),
     commit: async (changed) => {
+      // Moves first (renames in the real vault), then content writes — so an
+      // edit made after a move lands on the file's new path.
       for (const change of changed) {
+        if (change.op !== "move" || !change.from) continue;
+        if (matchesBlocked(change.from, blocked) || matchesBlocked(change.path, blocked)) continue;
+        try {
+          await renameEntry(change.from, change.path);
+        } catch {
+          // Source vanished or destination taken since the run started — the
+          // content writes below still land whatever the agent produced.
+        }
+      }
+      for (const change of changed) {
+        if (change.op === "move") continue;
         if (matchesBlocked(change.path, blocked)) continue;
         const abs = resolve(tempRoot, change.path.split("/").join(sep));
         const rel = relative(tempRoot, abs);
         if (rel.startsWith("..") || isAbsolute(rel)) continue;
-        await writeFile(change.path, await fs.readFile(abs, "utf8"));
+        try {
+          await writeFile(change.path, await fs.readFile(abs, "utf8"));
+        } catch {
+          // The temp file may not exist if the agent moved it after writing;
+          // the move above already carried the content.
+        }
       }
-      // Preserve the old assumption that writes land in the real vault by the
-      // time the caller receives the done event.
-      void realRoot;
     },
   };
 }
@@ -232,32 +287,54 @@ async function targetIsPrivate(targetPath: string, privacyRules: PrivacyRule[]):
 // ── Prompts ──────────────────────────────────────────────────────────────────
 
 const OP_PERSONA = [
-  "You are KestraVault AI operating directly on the user's knowledge vault (an 'LLM wiki').",
-  "FIRST read .kestravault/instructions.md — it is your schema; follow its conventions, style and",
-  "workflows exactly. Then read index.md to see what the wiki already contains.",
-  "You may only write files under wiki/, plus index.md and log.md. sources/ is immutable,",
-  "notes/ is the human's, and .kestravault/ is read-only — never try to modify them.",
-  "Use [[wikilinks]] with human-readable titles for every cross-reference.",
+  "You are KestraVault AI operating directly on the user's personal notes vault.",
+  `FIRST read ${GUIDE_PATH} — it is the vault's AI guide: its purpose, the working rules,`,
+  "and the Vault map (the index of the structure). Follow it exactly and use the map to",
+  "navigate instead of scanning every file. If the guide is missing, infer the structure",
+  "from the folders you see and be conservative.",
+  "You may create and edit notes anywhere in the vault, and move/rename them with the",
+  "move_note tool. Nothing is ever deleted — move superseded material to an archive",
+  "folder instead. Dotfiles and app metadata are read-only, with one exception: keep the",
+  `guide (${GUIDE_PATH}) current — after any change that adds, moves, or reorganizes notes,`,
+  "update its Vault map section (and, when the user corrected you, its Learned preferences",
+  "section). Do not rewrite the guide's Purpose or How-to-work sections unless the task",
+  "explicitly asks for it.",
+  "Cross-reference notes with [[wikilinks]] using note titles.",
   "Narrate briefly as you work (one short line per step), and end with a concise markdown",
-  "summary: what changed, anything contradicted or superseded, and any suggested follow-ups",
-  "or improvements to the instructions file.",
+  "summary: what changed and any suggested follow-ups.",
 ].join(" ");
 
 function opPrompt(req: AgentOpRequest): string {
-  if (req.op === "ingest") {
+  if (req.op === "file") {
     return [
-      `Ingest the source at "${req.targetPath}" into the wiki, following the Ingest workflow in`,
-      "the instructions: write/refresh its summary page under wiki/, update every wiki page it",
-      "touches (facts, cross-references, contradictions), update index.md, and append an ingest",
-      "entry to log.md. Do not modify the source file itself.",
+      `File the note at "${req.targetPath}" into the vault, following the guide: put it (or its`,
+      "substance) where it belongs in the structure, connect it to related notes with wikilinks,",
+      "update any notes it affects, and refresh the guide's Vault map. If the note is already in",
+      "the right place, just link and index it.",
     ].join(" ");
   }
-  return [
-    "Run the Lint workflow from the instructions: health-check the wiki for contradictions,",
-    "stale claims, orphan pages, missing pages and missing cross-references. Fix the mechanical",
-    "problems directly (index drift, missing links), report the judgment calls, and append a",
-    "lint entry to log.md. If the wiki is empty, say so and suggest what to ingest first.",
-  ].join(" ");
+  if (req.op === "tidy") {
+    return [
+      "Tidy the vault: check for broken or missing wikilinks, notes that plainly sit in the wrong",
+      "folder, duplicates or contradictions between notes, and a Vault map that has drifted from",
+      "reality. Fix the mechanical problems directly (links, the map, obvious misfiles), report",
+      "the judgment calls to the user, and leave everything else alone. If the vault is empty,",
+      "say so and suggest what to add first.",
+    ].join(" ");
+  }
+  if (req.op === "organize") {
+    return [
+      "Reorganize the vault so everything is easy to find: analyze the existing notes, decide the",
+      "best folder structure for this user's content (respect the guide's Purpose and any structure",
+      "the user clearly chose), move notes into place with move_note, add wikilinks between related",
+      "notes, and rewrite the guide's Vault map section so it precisely indexes the new structure —",
+      "every folder with a one-line description, plus the key notes. Never delete anything; move",
+      "superseded material to an archive folder. Keep the guide short.",
+    ].join(" ");
+  }
+  // custom — a user-authored skill. It runs under the same persona and rules.
+  const target = req.targetPath ? ` The currently open note is "${req.targetPath}".` : "";
+  return `${(req.prompt ?? "").trim()}${target}`;
 }
 
 // ── Runner ───────────────────────────────────────────────────────────────────
@@ -293,23 +370,32 @@ export async function runAgentOp(win: BrowserWindow, req: AgentOpRequest): Promi
     send({ requestId: req.requestId, type: "error", kind: "auth", message: envResult.error });
     return;
   }
-  if (req.op === "ingest" && !req.targetPath) {
+  if (req.op === "file" && !req.targetPath) {
     send({
       requestId: req.requestId,
       type: "error",
       kind: "unknown",
-      message: "Open the note you want to ingest first.",
+      message: "Open the note you want to file first.",
+    });
+    return;
+  }
+  if (req.op === "custom" && !req.prompt?.trim()) {
+    send({
+      requestId: req.requestId,
+      type: "error",
+      kind: "unknown",
+      message: "This custom skill has no instruction — edit it in Settings first.",
     });
     return;
   }
   const privacyRules = await readPrivacyRules();
-  if (req.op === "ingest" && req.targetPath && (await targetIsPrivate(req.targetPath, privacyRules))) {
+  if (req.targetPath && (await targetIsPrivate(req.targetPath, privacyRules))) {
     send({
       requestId: req.requestId,
       type: "error",
       kind: "unknown",
       message:
-        "This note is private, so a remote vault agent cannot read or ingest it. " +
+        "This note is private, so a remote vault agent cannot read or work on it. " +
         "Switch to a local model for private content, or make the note visible to cloud AI.",
     });
     return;
@@ -337,18 +423,76 @@ export async function runAgentOp(win: BrowserWindow, req: AgentOpRequest): Promi
   let full = "";
   let stderr = "";
 
+  // Remap already-recorded changes when a file (or a folder of files) moves,
+  // so the commit step writes content to the path the file ended up at.
+  const applyMoveToChanged = (from: string, to: string): void => {
+    for (const c of changed) {
+      if (c.op === "move") continue;
+      if (c.path === from) c.path = to;
+      else if (c.path.startsWith(`${from}/`)) c.path = to + c.path.slice(from.length);
+    }
+  };
+
+  // The move tool: renames inside the temp workspace, recorded for commit.
+  // Moves only — the agent has no way to delete anything.
+  const vaultTools = createSdkMcpServer({
+    name: "vault",
+    version: "1.0.0",
+    tools: [
+      tool(
+        "move_note",
+        "Move or rename a note (or folder) inside the vault. Use vault-relative paths. " +
+          "Parent folders of the destination are created as needed. Never overwrites: " +
+          "fails if the destination already exists.",
+        {
+          from: z.string().describe("Current vault-relative path"),
+          to: z.string().describe("New vault-relative path"),
+        },
+        async (args) => {
+          const check = checkToolUse(root, MOVE_TOOL, args);
+          if (!check.ok) return { content: [{ type: "text", text: check.reason }], isError: true };
+          if (check.action !== "move") {
+            return { content: [{ type: "text", text: "Unexpected tool input." }], isError: true };
+          }
+          const absFrom = resolve(root, check.from.split("/").join(sep));
+          const absTo = resolve(root, check.to.split("/").join(sep));
+          if (!existsSync(absFrom)) {
+            return {
+              content: [{ type: "text", text: `"${check.from}" does not exist.` }],
+              isError: true,
+            };
+          }
+          if (existsSync(absTo)) {
+            return {
+              content: [
+                { type: "text", text: `"${check.to}" already exists — pick another name.` },
+              ],
+              isError: true,
+            };
+          }
+          await fs.mkdir(dirname(absTo), { recursive: true });
+          await fs.rename(absFrom, absTo);
+          applyMoveToChanged(check.from, check.to);
+          changed.push({ path: check.to, op: "move", from: check.from });
+          return { content: [{ type: "text", text: `Moved ${check.from} → ${check.to}` }] };
+        },
+      ),
+    ],
+  });
+
   // Same asar workaround as ai.ts baseOptions — see claudeBinary.ts.
   const claudeExe = resolveClaudeExecutable();
   const options: Options = {
     ...(claudeExe ? { pathToClaudeCodeExecutable: claudeExe } : {}),
     model: req.model || "sonnet",
     cwd: root,
-    allowedTools: ["Read", "Glob", "Grep", "Write", "Edit"],
+    mcpServers: { vault: vaultTools },
+    allowedTools: ["Read", "Glob", "Grep", "Write", "Edit", MOVE_TOOL],
     disallowedTools: ["Bash", "WebFetch", "WebSearch", "Task", "NotebookEdit", "TodoWrite"],
     permissionMode: "default", // every tool call routes through canUseTool below
-    maxTurns: 60,
+    maxTurns: 80,
     includePartialMessages: true,
-    settingSources: [], // the vault's CLAUDE.md is for external tools; ours is the systemPrompt
+    settingSources: [], // any CLAUDE.md in the vault is a note; ours is the systemPrompt
     systemPrompt: OP_PERSONA,
     abortController: controller,
     env: envResult.env,
@@ -358,6 +502,24 @@ export async function runAgentOp(win: BrowserWindow, req: AgentOpRequest): Promi
     canUseTool: async (toolName, input) => {
       const check = checkToolUse(root, toolName, input);
       if (!check.ok) return { behavior: "deny", message: check.reason };
+      if (check.action === "move") {
+        const blocked =
+          matchesBlocked(check.from, workspace.blocked) ??
+          matchesBlocked(check.to, workspace.blocked);
+        if (blocked) {
+          return {
+            behavior: "deny",
+            message: `"${blocked.path}" is ${blocked.mode}; remote agent operations cannot touch it.`,
+          };
+        }
+        send({
+          requestId: req.requestId,
+          type: "tool",
+          action: "move",
+          path: `${check.from} → ${check.to}`,
+        });
+        return { behavior: "allow", updatedInput: input };
+      }
       const blocked = matchesBlocked(check.path, workspace.blocked);
       if (blocked) {
         return {
@@ -368,7 +530,9 @@ export async function runAgentOp(win: BrowserWindow, req: AgentOpRequest): Promi
       }
       if (check.action === "write" && check.path) {
         const op = existsSync(resolve(root, check.path)) ? "update" : "create";
-        if (!changed.some((c) => c.path === check.path)) changed.push({ path: check.path, op });
+        if (!changed.some((c) => c.op !== "move" && c.path === check.path)) {
+          changed.push({ path: check.path, op });
+        }
       }
       send({ requestId: req.requestId, type: "tool", action: check.action, path: check.path });
       return { behavior: "allow", updatedInput: input };
@@ -397,7 +561,7 @@ export async function runAgentOp(win: BrowserWindow, req: AgentOpRequest): Promi
   } catch (err) {
     const raw = err instanceof Error ? err.message : String(err);
     if (controller.signal.aborted) {
-      // A user cancel keeps whatever happened so far (writes are already on disk).
+      // A user cancel keeps whatever happened so far.
       await workspace.commit(changed).catch(() => undefined);
       send({ requestId: req.requestId, type: "done", text: full, changed });
     } else {

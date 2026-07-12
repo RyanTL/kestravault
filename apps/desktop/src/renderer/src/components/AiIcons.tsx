@@ -71,6 +71,7 @@ import {
   Sparkles,
   Import,
   ScanSearch,
+  FolderTree,
   Zap,
   type LucideIcon,
 } from "lucide-react";
@@ -97,6 +98,8 @@ const ICONS: Record<string, LucideIcon> = {
   ai: Sparkles,
   ingest: Import,
   lint: ScanSearch,
+  organize: FolderTree,
+  custom: Zap,
   skills: Zap,
 };
 

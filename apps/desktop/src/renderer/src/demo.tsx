@@ -224,6 +224,7 @@ window.api = {
     cancel: async () => undefined,
     status: async () => ({ connected: true }),
     resetStatus: async () => undefined,
+    models: async () => [],
     onEvent: unsub,
     agent: async () => undefined,
     onAgentEvent: unsub,

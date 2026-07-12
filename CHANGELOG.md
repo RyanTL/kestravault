@@ -8,6 +8,41 @@ Release notes for each GitHub Release are pasted from the matching section here.
 
 ## [Unreleased]
 
+### Changed
+
+- **Your structure, not ours.** The app no longer imposes a fixed folder layout
+  (`sources/` / `wiki/` / `notes/`) or wiki-style workflow. Onboarding now
+  scaffolds the folders *you* pick and writes the vault's **AI guide**
+  (`.kestravault/instructions.md`) — a short file with the vault's purpose,
+  working rules, and a **vault map**: an index the AI maintains and reads first,
+  so it can find anything without scanning every file. The guide is editable in
+  **Settings → AI guide**.
+- **Vault skills generalized.** *Ingest this page* / *Lint my wiki* became
+  *File this note*, *Tidy my vault*, and *Reorganize my vault*. Agent
+  operations can now create, edit, and **move** notes anywhere in the vault
+  (never delete); app metadata stays read-only.
+- **New vaults start clean.** The bundled example notes are gone — a fresh
+  vault contains only what onboarding creates for you.
+- **Current models everywhere.** Provider presets now default to the latest
+  models, and for API providers (OpenAI, Anthropic, OpenRouter, Ollama,
+  LM Studio, custom endpoints) the model picker refreshes **live from the
+  provider**, so newly released models appear without an app update.
+- The AI chat panel now adapts cleanly when resized narrow (controls wrap and
+  compact instead of clipping).
+
+### Added
+
+- **ChatGPT subscription support** — connect with your ChatGPT Plus/Pro login
+  via the Codex CLI, no API key, mirroring the existing Claude subscription
+  option.
+- **Optimize with AI** (Settings → AI guide): one click lets the AI analyze
+  your notes, reorganize folders and files for better retrieval, and rewrite
+  the vault map. Every change is listed, and nothing is ever deleted — only
+  moved.
+- **Custom skills**: define your own reusable AI operations (name +
+  instruction) in Settings; they appear in the chat's `/` menu next to the
+  built-in skills and are stored in the vault (`.kestravault/skills.json`).
+
 ## [0.3.0] - 2026-07-10
 
 ### Fixed
