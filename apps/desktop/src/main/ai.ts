@@ -51,10 +51,8 @@ export interface AiProviderConfig {
   baseUrl?: string;
 }
 
-// How hard the model should think before answering. A Claude-only concept:
-// the Agent SDK (subscription) silently downgrades it for models that don't
-// support effort, but the raw Anthropic API rejects it on Haiku — hence the
-// per-provider handling below. OpenAI-compatible providers ignore it entirely.
+// How hard the model should think before answering. The wire representation is
+// provider-specific, so each runner maps this shared value below.
 export type AiEffort = "low" | "medium" | "high";
 
 /** Resolve the API key for a provider from encrypted storage (main-process). */
@@ -72,7 +70,7 @@ export interface AiSendRequest {
   model?: string;
   /** Where to send the request. Defaults to the Claude subscription. */
   provider?: AiProviderConfig;
-  /** Reasoning effort (Claude providers only); omitted → provider default. */
+  /** Reasoning effort for supported models; omitted → provider default. */
   effort?: AiEffort;
 }
 
@@ -263,6 +261,7 @@ async function runCodex(
 
   const args = ["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only"];
   if (req.model) args.push("--model", req.model);
+  if (req.effort) args.push("-c", `model_reasoning_effort="${req.effort}"`);
 
   try {
     await new Promise<void>((resolvePromise, reject) => {
@@ -405,7 +404,16 @@ async function runOpenAi(
       "Content-Type": "application/json",
       ...(key ? { Authorization: `Bearer ${key}` } : {}),
     },
-    body: JSON.stringify({ model: req.model, messages, stream: true }),
+    body: JSON.stringify({
+      model: req.model,
+      messages,
+      stream: true,
+      ...(req.effort
+        ? provider.providerId === "openrouter"
+          ? { reasoning: { effort: req.effort } }
+          : { reasoning_effort: req.effort }
+        : {}),
+    }),
   });
   if (!res.ok || !res.body) throw await httpError(res);
   await pumpSse(

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Markdown } from "@renderer/components/Markdown";
 import { AiAvatar, AiIcon } from "@renderer/components/AiIcons";
+import { ProviderLogo } from "@renderer/components/ProviderLogo";
 import { NewNoteIcon } from "@renderer/components/Ribbon";
 import type { AiController } from "@renderer/vault/useAi";
 import type { ChatsController, ChatSource, ChatTurn } from "@renderer/vault/useChats";
@@ -50,6 +51,8 @@ interface AIChatPanelProps {
   activeModels: ModelOption[];
   providerId: string;
   providers: ProviderPreset[];
+  /** Providers with a saved API credential. */
+  keyedProviderIds: string[];
   onProviderModelChange: (providerId: string, modelId: string) => void;
   /** Reasoning effort, its setter, and whether the provider honours it (Claude). */
   effort: EffortLevel;
@@ -105,6 +108,7 @@ export function AIChatPanel({
   activeModels,
   providerId,
   providers,
+  keyedProviderIds,
   onProviderModelChange,
   effort,
   onEffortChange,
@@ -724,6 +728,8 @@ export function AIChatPanel({
                 <ModelAndEffortPicker
                   providerId={providerId}
                   providers={providers}
+                  keyedProviderIds={keyedProviderIds}
+                  activeConnection={conn}
                   activeModels={activeModels}
                   model={model}
                   effort={effort}
@@ -758,6 +764,8 @@ export function AIChatPanel({
 function ModelAndEffortPicker({
   providerId,
   providers,
+  keyedProviderIds,
+  activeConnection,
   activeModels,
   model,
   effort,
@@ -768,6 +776,8 @@ function ModelAndEffortPicker({
 }: {
   providerId: string;
   providers: ProviderPreset[];
+  keyedProviderIds: string[];
+  activeConnection: "unknown" | "checking" | "connected" | "disconnected";
   activeModels: ModelOption[];
   model: string;
   effort: EffortLevel;
@@ -818,15 +828,31 @@ function ModelAndEffortPicker({
           <div className="ai-model-menu-scroll">
             {providers.map((provider) => {
               const models = provider.id === providerId ? visibleActiveModels : provider.models;
+              // The active provider has been explicitly chosen in Settings. Other
+              // providers only count as configured when a credential is saved;
+              // no-key subscription/local providers must be selected and checked
+              // in Settings before the chat offers their models.
+              const configured = provider.id === providerId || keyedProviderIds.includes(provider.id);
+              const available = configured && !(provider.id === providerId && activeConnection === "disconnected");
               return (
-                <section className="ai-model-provider" key={provider.id}>
+                <section className={`ai-model-provider${available ? "" : " is-unavailable"}`} key={provider.id}>
                   <div className="ai-model-provider-name">
-                    <span className="ai-provider-mark" aria-hidden>
-                      {provider.label.charAt(0)}
-                    </span>
-                    {provider.label}
+                    <ProviderLogo id={provider.id} className="ai-provider-mark" />
+                    <span>{provider.label}</span>
+                    {!available ? <span className="ai-provider-status">Not connected</span> : null}
                   </div>
-                  {models.length ? (
+                  {!available ? (
+                    <button
+                      type="button"
+                      className="ai-model-option is-setup"
+                      onClick={() => {
+                        setOpen(false);
+                        onOpenSettings();
+                      }}
+                    >
+                      Connect in provider settings…
+                    </button>
+                  ) : models.length ? (
                     models.map((option) => {
                       const selected = provider.id === providerId && option.id === model;
                       return (

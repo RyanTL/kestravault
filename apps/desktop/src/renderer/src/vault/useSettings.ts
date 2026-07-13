@@ -191,7 +191,7 @@ interface PersistedSettings {
   providerId: string;
   byProvider: Record<string, ProviderState>;
   appearance: Appearance;
-  /** Reasoning effort for Claude providers (see EFFORT_OPTIONS). */
+  /** Reasoning effort for models that support it (see EFFORT_OPTIONS). */
   effort: EffortLevel;
   /** Vault-skill run tier: light/default/deep → Haiku/Sonnet/Opus (routing.ts). */
   runMode: RunMode;
@@ -216,8 +216,8 @@ export const THEME_OPTIONS: { id: ThemeMode; label: string }[] = [
   { id: "light", label: "Light" },
 ];
 
-// How hard Claude thinks before replying. "high" matches the provider default,
-// so it's the safe out-of-the-box choice; dial down for faster answers.
+// How hard supported models think before replying. "high" preserves the
+// existing default; dial down for faster, less expensive answers.
 export const EFFORT_OPTIONS: { id: EffortLevel; label: string }[] = [
   { id: "low", label: "Low" },
   { id: "medium", label: "Medium" },
@@ -429,6 +429,21 @@ export function useSettings() {
   // What the pickers offer: live list when discovery worked, curated otherwise.
   const models = liveModels.length ? liveModels : preset.models;
 
+  // Effort is model-specific rather than a blanket provider capability.
+  // Claude Haiku rejects output_config.effort; OpenAI exposes reasoning_effort
+  // on its reasoning families. OpenRouter forwards the equivalent setting for
+  // those same OpenAI models.
+  const supportsEffort = useMemo(() => {
+    if (preset.kind === "subscription" || preset.kind === "anthropic") {
+      return !/haiku/i.test(model);
+    }
+    if (preset.kind === "openai-sub") return true;
+    if (preset.kind !== "openai") return false;
+    const providerModel = model.replace(/^openai\//i, "");
+    const reasoningModel = /^(gpt-5|o\d)/i.test(providerModel);
+    return reasoningModel && (preset.id === "openai" || preset.id === "openrouter");
+  }, [model, preset.id, preset.kind]);
+
   const setProvider = useCallback((id: string) => {
     setState((s) => ({ ...s, providerId: getPreset(id).id }));
   }, []);
@@ -526,6 +541,8 @@ export function useSettings() {
     models,
     baseUrl,
     hasKey,
+    /** Provider ids with a credential in the encrypted secret store. */
+    keyedProviderIds: Array.from(savedKeys),
     /** null = not yet known; false = stored unencrypted (no OS keychain). */
     encryptionAvailable: encAvailable,
     /** Bumps on every key change — fold into status-invalidation deps. */
@@ -538,10 +555,10 @@ export function useSettings() {
     /** Whether the app polls GitHub releases for a newer version. */
     checkUpdates: state.checkUpdates,
     aiConfig,
-    /** Reasoning effort passed with each request (Claude providers). */
+    /** Reasoning effort passed with each request when the model supports it. */
     effort: state.effort,
-    /** Whether the active provider honours the effort control (Claude only). */
-    supportsEffort: preset.kind === "subscription" || preset.kind === "anthropic",
+    /** Whether the active provider/model combination honours effort. */
+    supportsEffort,
     /** Vault-skill run tier (light/default/deep); routed to a model in routing.ts. */
     runMode: state.runMode,
     /** Self-host sync server URL ("" = not configured). */

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AiIcon } from "@renderer/components/AiIcons";
-import { Sparkles, Sun, Info, Activity, RefreshCw, Brain } from "lucide-react";
+import { ProviderLogo } from "@renderer/components/ProviderLogo";
+import { Sparkles, Sun, Info, Activity, RefreshCw, Brain, Check, CircleAlert, LoaderCircle, Play, ChevronDown } from "lucide-react";
 import { INSTRUCTIONS_PATH } from "@renderer/vault/brain";
 import {
   readCustomSkills,
@@ -41,7 +42,7 @@ interface SettingsProps {
 }
 
 const TABS: { id: SettingsTab; label: string; icon: React.ReactNode }[] = [
-  { id: "ai", label: "AI model", icon: <SparkGlyph /> },
+  { id: "ai", label: "AI provider", icon: <SparkGlyph /> },
   { id: "brain", label: "AI guide", icon: <BrainGlyph /> },
   { id: "sync", label: "Sync & sharing", icon: <SyncGlyph /> },
   { id: "appearance", label: "Appearance", icon: <SunGlyph /> },
@@ -119,7 +120,17 @@ export function Settings({
   );
 }
 
-// ── AI model ─────────────────────────────────────────────────────────────────
+// ── AI provider ──────────────────────────────────────────────────────────────
+
+function providerDisplayName(id: string, label: string): string {
+  if (id === "claude-sub") return "Claude";
+  if (id === "chatgpt-sub") return "ChatGPT";
+  if (id === "anthropic") return "Anthropic";
+  if (id === "ollama") return "Ollama";
+  if (id === "lmstudio") return "LM Studio";
+  if (id === "custom") return "Custom";
+  return label;
+}
 
 type TestState = { kind: "idle" | "testing" } | { kind: "ok" } | { kind: "fail"; detail: string };
 
@@ -142,6 +153,7 @@ function AiSettings({ settings, ai }: { settings: SettingsController; ai: AiCont
   const [keyDraft, setKeyDraft] = useState("");
   const [savingKey, setSavingKey] = useState(false);
   const [test, setTest] = useState<TestState>({ kind: "idle" });
+  const connected = ai.conn === "connected";
 
   // Reset the inline test result + key draft whenever the provider changes, and
   // re-test whenever the saved key changes (keyVersion bumps on save/clear).
@@ -171,13 +183,8 @@ function AiSettings({ settings, ai }: { settings: SettingsController; ai: AiCont
 
   return (
     <section className="settings-section">
-      <h2 className="settings-h">AI model</h2>
-      <p className="settings-lead">
-        KestraVault is <strong>bring-your-own-model</strong>. Choose where the AI runs — your Claude
-        or ChatGPT subscription, an API key, or a model on your own machine. KestraVault has no
-        servers of its own; keys are <strong>encrypted with your operating-system keychain</strong>{" "}
-        and only ever sent to the provider you pick.
-      </p>
+      <h2 className="settings-h">AI provider</h2>
+      <p className="settings-lead">Choose the service and model KestraVault uses.</p>
 
       <div className="provider-grid">
         {PROVIDERS.map((p) => (
@@ -186,13 +193,16 @@ function AiSettings({ settings, ai }: { settings: SettingsController; ai: AiCont
             className={`provider-card${providerId === p.id ? " is-active" : ""}`}
             onClick={() => setProvider(p.id)}
           >
-            <div className="provider-card-head">
-              <span className="provider-name">{p.label}</span>
+            {providerId === p.id && connected ? (
+              <span className="provider-connected-dot" title="Connected" aria-label="Connected" />
+            ) : null}
+            <ProviderLogo id={p.id} />
+            <div className="provider-card-copy">
+              <span className="provider-name">{providerDisplayName(p.id, p.label)}</span>
               <span className={`provider-tag${p.local ? " is-local" : ""}`}>
-                {p.kind === "subscription" ? "No key" : p.local ? "Local" : "API key"}
+                {p.kind === "subscription" || p.kind === "openai-sub" ? "Subscription" : p.local ? "On device" : p.id === "custom" ? "Custom" : "API"}
               </span>
             </div>
-            <span className="provider-blurb">{p.blurb}</span>
           </button>
         ))}
       </div>
@@ -299,16 +309,19 @@ function AiSettings({ settings, ai }: { settings: SettingsController; ai: AiCont
 
         <label className="field">
           <span className="field-label">Model</span>
-          <input
-            className="field-input"
-            type="text"
-            list={`models-${preset.id}`}
-            value={model}
-            placeholder={preset.defaultModel || "model id"}
-            spellCheck={false}
-            autoComplete="off"
-            onChange={(e) => setProviderField("model", e.target.value)}
-          />
+          <div className="model-input-wrap">
+            <input
+              className="field-input model-input"
+              type="text"
+              list={`models-${preset.id}`}
+              value={model}
+              placeholder={preset.defaultModel || "model id"}
+              spellCheck={false}
+              autoComplete="off"
+              onChange={(e) => setProviderField("model", e.target.value)}
+            />
+            <ChevronDown className="model-input-chevron" size={17} strokeWidth={1.8} aria-hidden />
+          </div>
           <datalist id={`models-${preset.id}`}>
             {models.map((m) => (
               <option key={m.id} value={m.id}>
@@ -331,8 +344,7 @@ function AiSettings({ settings, ai }: { settings: SettingsController; ai: AiCont
           ) : null}
           {!isSub && !preset.local ? (
             <span className="field-hint">
-              Model suggestions come live from the provider, so new releases show up here without
-              an app update. Any model id the provider accepts can also be typed directly.
+              You can also enter any model ID supported by this provider.
             </span>
           ) : null}
         </label>
@@ -346,16 +358,24 @@ function AiSettings({ settings, ai }: { settings: SettingsController; ai: AiCont
           </div>
         ) : null}
 
-        <div className="settings-actions">
+        <div className={`connection-check is-${test.kind}`}>
+          <div className="connection-check-state" aria-live="polite">
+            <span className="connection-check-icon">
+              {test.kind === "testing" ? <LoaderCircle size={15} /> : test.kind === "ok" ? <Check size={15} /> : test.kind === "fail" ? <CircleAlert size={15} /> : <span className="connection-dot" />}
+            </span>
+            <span>
+              <strong>{test.kind === "testing" ? "Checking setup…" : test.kind === "ok" ? "Ready to use" : test.kind === "fail" ? "Connection failed" : "Connection"}</strong>
+              <small>{test.kind === "fail" ? test.detail : test.kind === "ok" ? `${providerDisplayName(preset.id, preset.label)} is connected` : test.kind === "idle" ? "Verify these settings before using AI" : "Contacting the provider"}</small>
+            </span>
+          </div>
           <button
-            className="ai-btn-primary"
+            className="ai-btn-ghost connection-check-button"
             onClick={() => void runTest()}
             disabled={test.kind === "testing"}
           >
-            {test.kind === "testing" ? "Testing…" : "Test connection"}
+            {test.kind !== "testing" ? <Play size={12} fill="currentColor" /> : null}
+            {test.kind === "testing" ? "Checking…" : test.kind === "idle" ? "Check now" : "Check again"}
           </button>
-          {test.kind === "ok" ? <span className="test-ok">✓ Connected</span> : null}
-          {test.kind === "fail" ? <span className="test-fail">{test.detail}</span> : null}
         </div>
       </div>
     </section>

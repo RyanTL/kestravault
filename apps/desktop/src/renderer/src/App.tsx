@@ -733,6 +733,7 @@ export default function App() {
             activeModels={settings.models}
             providerId={settings.providerId}
             providers={PROVIDERS}
+            keyedProviderIds={settings.keyedProviderIds}
             onProviderModelChange={settings.setProviderModel}
             effort={settings.effort}
             onEffortChange={settings.setEffort}

@@ -44,7 +44,7 @@ export interface AiProviderConfig {
   providerId?: string;
   baseUrl?: string;
 }
-/** Reasoning effort for Claude providers (subscription + Anthropic API). */
+/** Reasoning effort for provider/model combinations that support it. */
 export type EffortLevel = "low" | "medium" | "high";
 export interface AiSendRequest {
   requestId: string;
