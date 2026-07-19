@@ -47,23 +47,26 @@ interface Persisted {
   activeId: string;
 }
 
-function loadPersisted(): Persisted {
+/** Build the launch state while preserving completed conversation history. */
+export function initializeChats(raw: string | null): Persisted {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<Persisted>;
       if (Array.isArray(parsed.chats) && parsed.chats.length) {
         // Drop any "streaming" flag left over from a previous session — nothing
         // is in flight on a cold start.
-        const chats: Chat[] = parsed.chats.map((c) => ({
+        const restored: Chat[] = parsed.chats.map((c) => ({
           ...c,
           turns: (c.turns ?? []).map((t) => ({ ...t, streaming: false, working: undefined })),
         }));
-        const activeId =
-          parsed.activeId && chats.some((c) => c.id === parsed.activeId)
-            ? parsed.activeId
-            : chats[0]!.id;
-        return { chats, activeId };
+        const previousActive =
+          restored.find((c) => c.id === parsed.activeId) ?? restored[0]!;
+        const chat = freshChat(previousActive.model ?? DEFAULT_MODEL);
+
+        // Empty chats contain no history worth restoring. Dropping them keeps
+        // repeated launches from filling the picker with unused sessions.
+        const history = restored.filter((c) => c.turns.length > 0);
+        return { chats: [chat, ...history], activeId: chat.id };
       }
     }
   } catch {
@@ -71,6 +74,15 @@ function loadPersisted(): Persisted {
   }
   const first = freshChat();
   return { chats: [first], activeId: first.id };
+}
+
+function loadPersisted(): Persisted {
+  try {
+    return initializeChats(localStorage.getItem(STORAGE_KEY));
+  } catch {
+    // Storage may be unavailable; initialize an in-memory chat instead.
+    return initializeChats(null);
+  }
 }
 
 /** First line of the first user message, used as the chat's display title. */
