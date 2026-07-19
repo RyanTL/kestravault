@@ -819,6 +819,61 @@ export function FileExplorer(props: FileExplorerProps) {
 
   return (
     <nav className="pane pane-left">
+      {/* Explorer toolbar (Obsidian-style): always-visible actions pinned above
+          the sections. The sort menu drops down from its button. */}
+      <header className="explorer-toolbar" aria-label="File actions">
+        <button className="icon-btn explorer-tool" title="New note" onClick={() => void createNoteIn("")}>
+          <NotePlusIcon />
+        </button>
+        <button className="icon-btn explorer-tool" title="New folder" onClick={() => void createFolderIn("")}>
+          <FolderPlusIcon />
+        </button>
+        <div className="explorer-sort" ref={sortRef}>
+          <button
+            className={`icon-btn explorer-tool${sortOpen ? " is-active" : ""}`}
+            title="Change sort order"
+            aria-label="Change sort order"
+            aria-haspopup="menu"
+            aria-expanded={sortOpen}
+            onClick={() => setSortOpen((open) => !open)}
+          >
+            <ArrowDownAZ size={16} strokeWidth={1.7} aria-hidden />
+          </button>
+          {sortOpen ? (
+            <div className="explorer-sort-menu" role="menu" aria-label="Sort files">
+              <div className="explorer-sort-label">Sort order</div>
+              {SORT_OPTIONS.map((option) => (
+                <button
+                  key={option.mode}
+                  className="explorer-sort-option"
+                  role="menuitemradio"
+                  aria-checked={sortMode === option.mode}
+                  onClick={() => {
+                    setSortMode(option.mode);
+                    setSortOpen(false);
+                  }}
+                >
+                  <span className="explorer-sort-check">
+                    {sortMode === option.mode ? (
+                      <Check size={14} strokeWidth={1.9} aria-hidden />
+                    ) : null}
+                  </span>
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        <button
+          className="icon-btn explorer-tool"
+          title="Collapse all folders"
+          aria-label="Collapse all folders"
+          disabled={folderPaths.length === 0}
+          onClick={() => setCollapsed(new Set(folderPaths))}
+        >
+          <ChevronsDownUp size={16} strokeWidth={1.7} aria-hidden />
+        </button>
+      </header>
       <div
         ref={scrollRef}
         className={`tree-scroll side-scroll${rootDrop ? " is-drop-root" : ""}`}
@@ -892,69 +947,6 @@ export function FileExplorer(props: FileExplorerProps) {
           label="Private"
           collapsed={closedSections.has("private")}
           onToggle={() => toggleSection("private")}
-          actions={
-            <>
-              <button
-                className="icon-btn side-action"
-                title="New note"
-                onClick={() => void createNoteIn("")}
-              >
-                <NotePlusIcon />
-              </button>
-              <button
-                className="icon-btn side-action"
-                title="New folder"
-                onClick={() => void createFolderIn("")}
-              >
-                <FolderPlusIcon />
-              </button>
-              <div className="explorer-sort" ref={sortRef}>
-                <button
-                  className={`icon-btn side-action${sortOpen ? " is-active" : ""}`}
-                  title="Change sort order"
-                  aria-label="Change sort order"
-                  aria-haspopup="menu"
-                  aria-expanded={sortOpen}
-                  onClick={() => setSortOpen((open) => !open)}
-                >
-                  <ArrowDownAZ size={16} strokeWidth={1.7} aria-hidden />
-                </button>
-                {sortOpen ? (
-                  <div className="explorer-sort-menu" role="menu" aria-label="Sort files">
-                    <div className="explorer-sort-label">Sort order</div>
-                    {SORT_OPTIONS.map((option) => (
-                      <button
-                        key={option.mode}
-                        className="explorer-sort-option"
-                        role="menuitemradio"
-                        aria-checked={sortMode === option.mode}
-                        onClick={() => {
-                          setSortMode(option.mode);
-                          setSortOpen(false);
-                        }}
-                      >
-                        <span className="explorer-sort-check">
-                          {sortMode === option.mode ? (
-                            <Check size={14} strokeWidth={1.9} aria-hidden />
-                          ) : null}
-                        </span>
-                        {option.label}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-              <button
-                className="icon-btn side-action"
-                title="Collapse all folders"
-                aria-label="Collapse all folders"
-                disabled={folderPaths.length === 0}
-                onClick={() => setCollapsed(new Set(folderPaths))}
-              >
-                <ChevronsDownUp size={16} strokeWidth={1.7} aria-hidden />
-              </button>
-            </>
-          }
         >
           <ul className="tree-root">{orderedTree.map((n) => renderNode(n, 0))}</ul>
           {orderedTree.length === 0 ? (
