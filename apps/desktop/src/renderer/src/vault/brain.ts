@@ -233,7 +233,31 @@ export function looksLikeInstructions(text: string): boolean {
 
 // ── Chat personalization ─────────────────────────────────────────────────────
 
-const BRAIN_CONTEXT_LIMIT = 6000;
+// A real vault guide is often more substantial than the compact guide produced
+// by onboarding. Imported vaults commonly already have an AGENTS.md or
+// CLAUDE.md contract; keep enough room for those files so important sections
+// near the end (query workflow, citations, working style) are not cut off.
+const BRAIN_CONTEXT_LIMIT = 12_000;
+
+/** Guide locations understood by chat, in precedence order. New KestraVault
+ * guides win; imported Codex / Claude vault contracts are safe fallbacks. */
+export const CHAT_GUIDE_PATHS = [INSTRUCTIONS_PATH, "AGENTS.md", "CLAUDE.md"] as const;
+
+/** Read the best available vault guide. The injected reader keeps this small
+ * policy independently testable without Electron. */
+export async function readBrainInstructions(
+  read: (path: string) => Promise<string> = (path) => window.api.vault.read(path),
+): Promise<string> {
+  for (const path of CHAT_GUIDE_PATHS) {
+    try {
+      const content = await read(path);
+      if (content.trim()) return content;
+    } catch {
+      // Missing guide: imported vaults may use the next supported filename.
+    }
+  }
+  return "";
+}
 
 /** Wrap instructions.md as a system-prompt block for the in-app assistant. */
 export function brainContext(instructions: string): string {

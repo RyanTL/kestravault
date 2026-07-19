@@ -37,17 +37,20 @@ export function notesContext(matches: NoteMatch[]): string {
       const preview = m.private
         ? [PRIVATE_BODY_PLACEHOLDER, m.description].filter(Boolean).join("\n")
         : m.snippet || "(no preview)";
-      return `### ${m.name}\n${preview}`;
+      return `### ${m.name} (${m.path})\n${preview}`;
     })
     .join("\n\n");
-  return `\n\nThe user's notes that may be relevant:\n\n${blocks}`;
+  return (
+    `\n\nVault context selected for this question. The index is the map of the vault; ` +
+    `use the complete note bodies below as primary evidence and cite their note titles:\n\n${blocks}`
+  );
 }
 
 /** Context for "this page" actions: the active note's title + body. */
 export function pageContext(
   title: string,
   content: string,
-  opts: { aiIsLocal?: boolean; privacyMode?: PrivacyMode } = {},
+  opts: { aiIsLocal?: boolean; privacyMode?: PrivacyMode; maxBodyChars?: number } = {},
 ): string {
   const { data, body } = parseFrontmatter(content);
   const mode = opts.privacyMode ?? (isPrivate(data) ? "cloud-ai-private" : "public");
@@ -69,7 +72,47 @@ export function pageContext(
       (desc ? `\nDescription: ${desc}` : "")
     );
   }
-  return `\n\nThe current note is titled "${title}". Its full contents:\n\n"""\n${body.trim()}\n"""`;
+  const cleanBody = body.trim();
+  const visibleBody = opts.maxBodyChars ? balancedExcerpt(cleanBody, opts.maxBodyChars) : cleanBody;
+  const contextLabel =
+    visibleBody === cleanBody ? "full contents" : "relevant contents (middle omitted)";
+  return `\n\nThe current note is titled "${title}". Its ${contextLabel}:\n\n"""\n${visibleBody}\n"""`;
+}
+
+/** Keep both the beginning and ending of an oversized note for chat context. */
+export function balancedExcerpt(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  const marker = "\n\n… [middle omitted to keep this request fast] …\n\n";
+  const available = Math.max(0, limit - marker.length);
+  const head = Math.ceil(available * 0.75);
+  return text.slice(0, head) + marker + text.slice(-(available - head));
+}
+
+/**
+ * Bound conversation prefill while retaining the current prompt and newest
+ * complete user/assistant pairs. The current prompt is never truncated.
+ */
+export function limitChatHistory<T extends { role: "user" | "assistant"; content: string }>(
+  messages: T[],
+  budget = 24_000,
+): T[] {
+  if (messages.length <= 1) return messages;
+  const current = messages.at(-1)!;
+  const kept: T[][] = [];
+  let used = current.content.length;
+  let i = messages.length - 2;
+  while (i >= 0) {
+    const group =
+      messages[i]?.role === "assistant" && messages[i - 1]?.role === "user"
+        ? [messages[i - 1]!, messages[i]!]
+        : [messages[i]!];
+    const size = group.reduce((sum, message) => sum + message.content.length, 0);
+    if (used + size > budget) break;
+    kept.unshift(group);
+    used += size;
+    i -= group.length;
+  }
+  return [...kept.flat(), current];
 }
 
 // ---- Time & activity awareness --------------------------------------------
@@ -180,7 +223,8 @@ export const PAGE_ACTIONS: PageAction[] = [
     id: "translate",
     label: "Translate to English",
     icon: "translate",
-    prompt: "Translate this note to English. Preserve Markdown formatting. Return only the translation.",
+    prompt:
+      "Translate this note to English. Preserve Markdown formatting. Return only the translation.",
     needsNote: true,
   },
 ];
@@ -285,7 +329,8 @@ export const INLINE_AI_ACTIONS: InlineAiAction[] = [
     id: "improve",
     label: "Improve writing",
     icon: "improve",
-    instruction: "Rewrite the text to improve clarity, flow, and grammar while keeping its meaning.",
+    instruction:
+      "Rewrite the text to improve clarity, flow, and grammar while keeping its meaning.",
     mode: "replace",
   },
   {
@@ -306,7 +351,8 @@ export const INLINE_AI_ACTIONS: InlineAiAction[] = [
     id: "longer",
     label: "Make longer",
     icon: "longer",
-    instruction: "Expand the text with more detail and explanation, keeping the same intent and tone.",
+    instruction:
+      "Expand the text with more detail and explanation, keeping the same intent and tone.",
     mode: "replace",
   },
   {
@@ -315,10 +361,22 @@ export const INLINE_AI_ACTIONS: InlineAiAction[] = [
     icon: "tone",
     mode: "replace",
     variants: [
-      { id: "professional", label: "Professional", instruction: "Rewrite the text in a professional tone." },
+      {
+        id: "professional",
+        label: "Professional",
+        instruction: "Rewrite the text in a professional tone.",
+      },
       { id: "casual", label: "Casual", instruction: "Rewrite the text in a casual, relaxed tone." },
-      { id: "confident", label: "Confident", instruction: "Rewrite the text in a confident, assertive tone." },
-      { id: "friendly", label: "Friendly", instruction: "Rewrite the text in a warm, friendly tone." },
+      {
+        id: "confident",
+        label: "Confident",
+        instruction: "Rewrite the text in a confident, assertive tone.",
+      },
+      {
+        id: "friendly",
+        label: "Friendly",
+        instruction: "Rewrite the text in a warm, friendly tone.",
+      },
     ],
   },
   {

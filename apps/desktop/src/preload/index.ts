@@ -240,11 +240,8 @@ const api = {
     root: (): Promise<string> => ipcRenderer.invoke("vault:root"),
     tree: (): Promise<VaultNode[]> => ipcRenderer.invoke("vault:tree"),
     privacyRules: (): Promise<PrivacyRule[]> => ipcRenderer.invoke("vault:get-privacy-rules"),
-    setPrivacy: (
-      path: string,
-      target: PrivacyTarget,
-      mode: PrivacyMode,
-    ): Promise<void> => ipcRenderer.invoke("vault:set-privacy", path, target, mode),
+    setPrivacy: (path: string, target: PrivacyTarget, mode: PrivacyMode): Promise<void> =>
+      ipcRenderer.invoke("vault:set-privacy", path, target, mode),
     clearPrivacy: (path: string, target: PrivacyTarget): Promise<void> =>
       ipcRenderer.invoke("vault:clear-privacy", path, target),
     /** All known vaults, with the open one flagged `current`. */
@@ -258,6 +255,9 @@ const api = {
     /** Forget a vault from the list (does not delete files). Returns the new list. */
     removeVault: (path: string): Promise<VaultInfo[]> => ipcRenderer.invoke("vault:remove", path),
     read: (path: string): Promise<string> => ipcRenderer.invoke("file:read", path),
+    /** Read a fresh batch in one IPC round trip; missing files have empty content. */
+    readMany: (paths: string[]): Promise<Array<{ path: string; content: string }>> =>
+      ipcRenderer.invoke("file:read-many", paths),
     write: (path: string, content: string): Promise<void> =>
       ipcRenderer.invoke("file:write", path, content),
     /** Read a binary asset (image) as base64 for a data: URL. */

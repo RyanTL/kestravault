@@ -5,6 +5,7 @@ import {
   defaultProfile,
   enhancePrompt,
   looksLikeInstructions,
+  readBrainInstructions,
   scaffoldDirs,
   type BrainProfile,
 } from "./brain";
@@ -75,11 +76,23 @@ describe("AI personalization plumbing", () => {
     expect(looksLikeInstructions("# Title\nbut too short")).toBe(false);
   });
 
-  it("brainContext embeds and truncates the guide", () => {
+  it("brainContext embeds a substantial imported guide without losing later sections", () => {
     expect(brainContext("")).toBe("");
     const ctx = brainContext("# Rules\nBe nice.");
     expect(ctx).toContain("Be nice.");
-    const long = brainContext("#" + "x".repeat(10_000));
-    expect(long.length).toBeLessThan(7_000);
+    const long = brainContext("#" + "x".repeat(30_000));
+    expect(long.length).toBeGreaterThan(11_000);
+    expect(long.length).toBeLessThan(13_000);
+  });
+
+  it("falls back to AGENTS.md or CLAUDE.md for imported vaults", async () => {
+    const seen: string[] = [];
+    const content = await readBrainInstructions(async (path) => {
+      seen.push(path);
+      if (path === "AGENTS.md") return "# Existing vault contract";
+      throw new Error("missing");
+    });
+    expect(content).toContain("Existing vault contract");
+    expect(seen).toEqual([".kestravault/instructions.md", "AGENTS.md"]);
   });
 });

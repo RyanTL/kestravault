@@ -13,6 +13,7 @@ interface VaultApi {
   setPrivacy(path: string, target: PrivacyTarget, mode: PrivacyMode): Promise<void>;
   clearPrivacy(path: string, target: PrivacyTarget): Promise<void>;
   read(path: string): Promise<string>;
+  readMany(paths: string[]): Promise<Array<{ path: string; content: string }>>;
   write(path: string, content: string): Promise<void>;
   /** Read a binary asset (image) as base64 for a data: URL. */
   readBinary(path: string): Promise<string>;

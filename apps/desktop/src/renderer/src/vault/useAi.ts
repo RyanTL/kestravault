@@ -17,6 +17,12 @@ export interface StreamHandlers {
   onError: (kind: AiErrorKind, message: string) => void;
 }
 
+interface BufferedStreamHandlers {
+  handlers: StreamHandlers;
+  pending: string;
+  frame: number | null;
+}
+
 /** Handlers for a vault agent operation (a skill) — a tool-using run. */
 export interface AgentHandlers extends Omit<StreamHandlers, "onDone"> {
   /** A tool call was allowed — e.g. "write projects/x.md". */
@@ -50,7 +56,7 @@ const newRequestId = (): string => `ai-${Date.now()}-${nextId++}`;
 export function useAi(getProvider?: () => AiProviderConfig | undefined) {
   const [conn, setConn] = useState<ConnState>("unknown");
   const [status, setStatus] = useState<AiStatus | null>(null);
-  const handlers = useRef(new Map<string, StreamHandlers>());
+  const handlers = useRef(new Map<string, BufferedStreamHandlers>());
   const agentHandlers = useRef(new Map<string, AgentHandlers>());
 
   const providerRef = useRef(getProvider);
@@ -58,19 +64,40 @@ export function useAi(getProvider?: () => AiProviderConfig | undefined) {
   const provider = (): AiProviderConfig | undefined => providerRef.current?.();
 
   useEffect(() => {
-    return window.api.ai.onEvent((e) => {
-      const h = handlers.current.get(e.requestId);
-      if (!h) return;
-      if (e.type === "delta") h.onDelta(e.text);
-      else if (e.type === "done") {
+    const flush = (entry: BufferedStreamHandlers): void => {
+      if (entry.frame !== null) cancelAnimationFrame(entry.frame);
+      entry.frame = null;
+      if (!entry.pending) return;
+      const text = entry.pending;
+      entry.pending = "";
+      entry.handlers.onDelta(text);
+    };
+    const unsubscribe = window.api.ai.onEvent((e) => {
+      const entry = handlers.current.get(e.requestId);
+      if (!entry) return;
+      if (e.type === "delta") {
+        entry.pending += e.text;
+        if (entry.frame === null) {
+          entry.frame = requestAnimationFrame(() => flush(entry));
+        }
+      } else if (e.type === "done") {
+        flush(entry);
         handlers.current.delete(e.requestId);
-        h.onDone(e.text);
+        entry.handlers.onDone(e.text);
       } else {
+        flush(entry);
         handlers.current.delete(e.requestId);
         if (e.kind === "auth") setConn("disconnected");
-        h.onError(e.kind, e.message);
+        entry.handlers.onError(e.kind, e.message);
       }
     });
+    return () => {
+      unsubscribe();
+      for (const entry of handlers.current.values()) {
+        if (entry.frame !== null) cancelAnimationFrame(entry.frame);
+      }
+      handlers.current.clear();
+    };
   }, []);
 
   useEffect(() => {
@@ -124,7 +151,7 @@ export function useAi(getProvider?: () => AiProviderConfig | undefined) {
       effort?: EffortLevel,
     ): { id: string; cancel: () => void } => {
       const id = newRequestId();
-      handlers.current.set(id, h);
+      handlers.current.set(id, { handlers: h, pending: "", frame: null });
       void window.api.ai.send({
         requestId: id,
         system,

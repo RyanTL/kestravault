@@ -1,4 +1,4 @@
-import { app } from "electron";
+import { app, shell } from "electron";
 import { promises as fs } from "node:fs";
 import { join, resolve, relative, dirname, basename, isAbsolute, sep, posix } from "node:path";
 import {
@@ -77,8 +77,7 @@ async function loadRegistry(): Promise<Registry> {
           .filter((v): v is RegistryEntry => !!v && typeof v.path === "string")
           .map((v) => ({ path: resolve(v.path), addedAt: v.addedAt ?? Date.now() }))
       : [];
-    let currentPath =
-      typeof parsed.currentPath === "string" ? resolve(parsed.currentPath) : "";
+    let currentPath = typeof parsed.currentPath === "string" ? resolve(parsed.currentPath) : "";
     if (!vaults.some((v) => v.path === currentPath)) currentPath = vaults[0]?.path ?? "";
     if (vaults.length && currentPath) {
       registry = { vaults, currentPath };
@@ -132,6 +131,25 @@ export async function ensureVault(): Promise<string> {
   await loadRegistry();
   await ensureVaultAt(vaultRoot());
   return vaultRoot();
+}
+
+/**
+ * Read a fresh, point-in-time-ish batch of vault files. Individual missing
+ * files become empty strings so one external rename cannot fail an entire chat
+ * context sweep. Paths still pass through readFile/safeJoin independently.
+ */
+export async function readFiles(
+  paths: string[],
+): Promise<Array<{ path: string; content: string }>> {
+  return Promise.all(
+    [...new Set(paths)].map(async (path) => {
+      try {
+        return { path, content: await readFile(path) };
+      } catch {
+        return { path, content: "" };
+      }
+    }),
+  );
 }
 
 /** Every known vault, with the current one flagged. */
@@ -263,9 +281,7 @@ export async function readLocalPrivacyStore(): Promise<LocalPrivacyStore> {
     return {
       version: 1,
       rules: Array.isArray(parsed.rules) ? parsed.rules.map(normalizeRule) : [],
-      tombstones: Array.isArray(parsed.tombstones)
-        ? parsed.tombstones.map(normalizeTombstone)
-        : [],
+      tombstones: Array.isArray(parsed.tombstones) ? parsed.tombstones.map(normalizeTombstone) : [],
     };
   } catch {
     return emptyPrivacyStore();
@@ -509,7 +525,13 @@ export async function renameEntry(relPath: string, nextRelPath: string): Promise
 }
 
 export async function deleteEntry(relPath: string): Promise<void> {
-  await fs.rm(safeJoin(relPath), { recursive: true, force: true });
+  const path = safeJoin(relPath);
+  try {
+    await fs.access(path);
+    await shell.trashItem(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
   await removePrivacyRulesForPath(relPath);
 }
 

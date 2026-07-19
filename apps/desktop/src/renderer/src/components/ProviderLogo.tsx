@@ -1,11 +1,12 @@
 import anthropicLogo from "@renderer/assets/providers/anthropic.svg";
+import claudeLogo from "@renderer/assets/providers/claude.svg";
 import lmStudioLogo from "@renderer/assets/providers/lmstudio.svg";
 import ollamaLogo from "@renderer/assets/providers/ollama.svg";
 import openAiLogo from "@renderer/assets/providers/openai.svg";
 import openRouterLogo from "@renderer/assets/providers/openrouter.svg";
 
 const LOGOS: Record<string, string> = {
-  "claude-sub": anthropicLogo,
+  "claude-sub": claudeLogo,
   anthropic: anthropicLogo,
   "chatgpt-sub": openAiLogo,
   openai: openAiLogo,

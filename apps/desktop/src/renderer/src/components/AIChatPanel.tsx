@@ -17,14 +17,15 @@ import {
   isTemporalQuery,
   notesContext,
   pageContext,
+  limitChatHistory,
   timeContext,
 } from "@renderer/vault/aiPrompts";
-import { INSTRUCTIONS_PATH, brainContext } from "@renderer/vault/brain";
+import { CHAT_GUIDE_PATHS, brainContext, readBrainInstructions } from "@renderer/vault/brain";
 import { readCustomSkills, toVaultSkill } from "@renderer/vault/skills";
 import { isPrivateNote } from "@renderer/vault/notePrivacy";
 import { noteName } from "@renderer/vault/paths";
 import { recordActivity } from "@renderer/vault/activityLog";
-import { rankNotes } from "@renderer/vault/search";
+import { retrieveNotesForContext } from "@renderer/vault/search";
 import { EFFORT_OPTIONS, type ModelOption, type ProviderPreset } from "@renderer/vault/useSettings";
 import { RUN_MODES, agentModelFor, isRoutable } from "@renderer/vault/routing";
 import {
@@ -79,6 +80,11 @@ interface AIChatPanelProps {
 
 type Scope = "page" | "vault";
 
+interface ChatFlight {
+  turnId: string;
+  cancel: () => void;
+}
+
 let turnId = 0;
 const nextTurn = (): string => `turn-${turnId++}`;
 
@@ -129,11 +135,11 @@ export function AIChatPanel({
   // different note no longer flips scope back to that page. Users who want to
   // focus on one note toggle to "This page" explicitly.
   const [scope, setScope] = useState<Scope>("vault");
-  const [busy, setBusy] = useState(false);
+  const [busyChatIds, setBusyChatIds] = useState<ReadonlySet<string>>(() => new Set());
   const [historyOpen, setHistoryOpen] = useState(false);
   // Highlighted row in the "/" skills menu (open when `input` is "/query").
   const [slashActive, setSlashActive] = useState(0);
-  const cancelRef = useRef<(() => void) | null>(null);
+  const flightsRef = useRef(new Map<string, ChatFlight>());
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -156,8 +162,28 @@ export function AIChatPanel({
 
   const activeChat = chats.activeChat;
   const turns = activeChat.turns;
+  const busy = busyChatIds.has(activeChat.id);
+
+  const startFlight = useCallback((chatId: string, flight: ChatFlight): void => {
+    flightsRef.current.set(chatId, flight);
+    setBusyChatIds(new Set(flightsRef.current.keys()));
+  }, []);
+  const finishFlight = useCallback((chatId: string, turnId: string): void => {
+    if (flightsRef.current.get(chatId)?.turnId !== turnId) return;
+    flightsRef.current.delete(chatId);
+    setBusyChatIds(new Set(flightsRef.current.keys()));
+  }, []);
+  const flightIsActive = useCallback(
+    (chatId: string, turnId: string): boolean => flightsRef.current.get(chatId)?.turnId === turnId,
+    [],
+  );
+  const stopChat = useCallback((chatId: string): void => {
+    flightsRef.current.get(chatId)?.cancel();
+  }, []);
   const activePrivacyMode: PrivacyMode = useMemo(() => {
-    const fromTree = activePath ? files.find((f) => f.path === activePath)?.privacy?.mode : undefined;
+    const fromTree = activePath
+      ? files.find((f) => f.path === activePath)?.privacy?.mode
+      : undefined;
     if (fromTree) return fromTree;
     return isPrivateNote(activeContent) ? "cloud-ai-private" : "public";
   }, [activePath, activeContent, files]);
@@ -172,120 +198,219 @@ export function AIChatPanel({
   const send = useCallback(
     async (text: string, opts?: { forcePage?: boolean; chatId?: string }) => {
       const prompt = text.trim();
-      if (!prompt || busy) return;
+      const chatId = opts?.chatId ?? chats.activeId;
+      if (!prompt || flightsRef.current.has(chatId)) return;
       setInput("");
 
-      const chatId = opts?.chatId ?? chats.activeId;
       const useScope: Scope = opts?.forcePage ? "page" : scope;
       const userTurn: ChatTurn = { id: nextTurn(), role: "user", content: prompt };
-      const aTurn: ChatTurn = { id: nextTurn(), role: "assistant", content: "", streaming: true };
+      const aTurn: ChatTurn = {
+        id: nextTurn(),
+        role: "assistant",
+        content: "",
+        streaming: true,
+        working: "Reading notes…",
+      };
       // Snapshot the prior conversation for the model (text only).
       const prior = chats.getChat(chatId)?.turns ?? [];
-      const history = [...prior, userTurn].map((t) => ({ role: t.role, content: t.content }));
+      const history = limitChatHistory(
+        [...prior, userTurn].map((t) => ({ role: t.role, content: t.content })),
+      );
       chats.updateTurns(chatId, (prev) => [...prev, userTurn, aTurn]);
-      setBusy(true);
 
-      // Log the question, and give the model time + recent-activity awareness.
-      // The deeper 30-day digest is fetched only when the question looks temporal.
-      recordActivity({ type: "ask", path: activePath ?? "", title: activeTitle || undefined, note: prompt });
-
-      // Assemble context for this send.
-      let system = ASSISTANT_PERSONA;
-      // The vault's personalized brain instructions (written by onboarding, or
-      // by hand) shape every answer — read fresh so external edits apply at once.
-      try {
-        system += brainContext(await window.api.vault.read(INSTRUCTIONS_PATH));
-      } catch {
-        /* no brain instructions yet — the base persona is fine */
-      }
-      try {
-        const actx = await window.api.activity.context({ deep: isTemporalQuery(prompt) });
-        system += timeContext(actx);
-      } catch {
-        /* activity context is best-effort — fall back to the base persona */
-      }
-      let sources: ChatSource[] | undefined;
-      if (useScope === "page" && activePath) {
-        // A Private note's body never goes to a remote provider — refuse the
-        // page action with a clear message rather than silently dropping it.
-        if (activeAiAccess !== "full") {
-          chats.updateTurns(chatId, (prev) =>
-            prev.map((t) =>
-              t.id === aTurn.id
-                ? {
-                    ...t,
-                    content:
-                      activePrivacyMode === "local-only"
-                        ? LOCAL_ONLY_PAGE_REFUSAL
-                        : PRIVATE_PAGE_REFUSAL,
-                    streaming: false,
-                  }
-                : t,
-            ),
-          );
-          setBusy(false);
-          cancelRef.current = null;
-          return;
-        }
-        system += pageContext(activeTitle, activeContent, { aiIsLocal, privacyMode: activePrivacyMode });
-      } else {
-        // "All notes" scope: always give the model the full body of the note
-        // the user currently has open — it's the most likely subject of a
-        // question like "what should I do today?" — then add the top ranked
-        // matches from the rest of the vault. pageContext guards Private notes.
-        const parts: string[] = [];
-        const srcs: ChatSource[] = [];
-        if (activePath && activeAiAccess !== "none") {
-          parts.push(pageContext(activeTitle, activeContent, { aiIsLocal, privacyMode: activePrivacyMode }));
-          srcs.push({ name: activeTitle || noteName(activePath), path: activePath });
-        }
-        const matches = (await rankNotes(files, prompt, 6, aiIsLocal)).filter(
-          (m) => m.path !== activePath,
+      let cancelled = false;
+      let transportCancel: (() => void) | null = null;
+      const patchTurn = (patch: Partial<ChatTurn>): void =>
+        chats.updateTurns(chatId, (prev) =>
+          prev.map((turn) => (turn.id === aTurn.id ? { ...turn, ...patch } : turn)),
         );
-        if (matches.length) {
-          parts.push(notesContext(matches));
-          srcs.push(...matches.map((m) => ({ name: m.name, path: m.path })));
-        }
-        if (parts.length) system += parts.join("");
-        if (srcs.length) sources = srcs;
-      }
+      const cancel = (): void => {
+        if (!flightIsActive(chatId, aTurn.id)) return;
+        cancelled = true;
+        transportCancel?.();
+        finishFlight(chatId, aTurn.id);
+        chats.updateTurns(chatId, (prev) =>
+          prev.map((turn) =>
+            turn.id === aTurn.id
+              ? {
+                  ...turn,
+                  content: turn.content || "Stopped.",
+                  streaming: false,
+                  working: undefined,
+                }
+              : turn,
+          ),
+        );
+      };
+      startFlight(chatId, { turnId: aTurn.id, cancel });
 
-      const handle = stream(
-        system,
-        history,
-        model,
-        {
-          onDelta: (delta) =>
-            chats.updateTurns(chatId, (prev) =>
-              prev.map((t) => (t.id === aTurn.id ? { ...t, content: t.content + delta } : t)),
-            ),
-          onDone: (fullText) => {
-            setBusy(false);
-            cancelRef.current = null;
+      // Log the question. Time + recent-activity awareness is attached below
+      // only when the question actually looks temporal.
+      recordActivity({
+        type: "ask",
+        path: activePath ?? "",
+        title: activeTitle || undefined,
+        note: prompt,
+      });
+
+      try {
+        // Assemble context for this send. Cancellation is checked between each
+        // async phase so Stop also works before the provider request begins.
+        const prepareStartedAt = performance.now();
+        const snapshotPaths = [
+          ...CHAT_GUIDE_PATHS,
+          ...(useScope === "vault" ? files.map((file) => file.path) : []),
+        ];
+        const snapshot = new Map(
+          (await window.api.vault.readMany(snapshotPaths)).map(({ path, content }) => [
+            path,
+            content,
+          ]),
+        );
+        if (cancelled) return;
+        let system = ASSISTANT_PERSONA;
+        // The vault's personalized brain instructions (written by onboarding, or
+        // by hand) shape every answer — read fresh so external edits apply at once.
+        system += brainContext(
+          await readBrainInstructions(async (path) => snapshot.get(path) ?? ""),
+        );
+        if (cancelled) return;
+        // Activity and clock context are useful for temporal questions, but on an
+        // ordinary knowledge query they waste context and can distract the model.
+        if (isTemporalQuery(prompt)) {
+          try {
+            const actx = await window.api.activity.context({ deep: true });
+            system += timeContext(actx);
+          } catch {
+            /* activity context is best-effort — continue without it */
+          }
+          if (cancelled) return;
+        }
+        let sources: ChatSource[] | undefined;
+        if (useScope === "page" && activePath) {
+          // A Private note's body never goes to a remote provider — refuse the
+          // page action with a clear message rather than silently dropping it.
+          if (activeAiAccess !== "full") {
             chats.updateTurns(chatId, (prev) =>
               prev.map((t) =>
                 t.id === aTurn.id
-                  ? { ...t, content: fullText || t.content, streaming: false, sources }
+                  ? {
+                      ...t,
+                      content:
+                        activePrivacyMode === "local-only"
+                          ? LOCAL_ONLY_PAGE_REFUSAL
+                          : PRIVATE_PAGE_REFUSAL,
+                      streaming: false,
+                    }
                   : t,
               ),
             );
-          },
-          onError: (_kind, message) => {
-            setBusy(false);
-            cancelRef.current = null;
-            chats.updateTurns(chatId, (prev) =>
-              prev.map((t) =>
-                t.id === aTurn.id ? { ...t, content: message, streaming: false, error: true } : t,
-              ),
+            finishFlight(chatId, aTurn.id);
+            return;
+          }
+          system += pageContext(activeTitle, activeContent, {
+            aiIsLocal,
+            privacyMode: activePrivacyMode,
+          });
+        } else {
+          // "All notes" scope: always give the model the full body of the note
+          // the user currently has open — it's the most likely subject of a
+          // question like "what should I do today?" — then add the top ranked
+          // matches from the rest of the vault. pageContext guards Private notes.
+          const parts: string[] = [];
+          const srcs: ChatSource[] = [];
+          if (activePath && activeAiAccess !== "none") {
+            parts.push(
+              pageContext(activeTitle, activeContent, {
+                aiIsLocal,
+                privacyMode: activePrivacyMode,
+                maxBodyChars: 12_000,
+              }),
             );
+            srcs.push({ name: activeTitle || noteName(activePath), path: activePath });
+          }
+          const { matches } = await retrieveNotesForContext(files, prompt, {
+            aiIsLocal,
+            excludePaths: activePath ? [activePath] : [],
+            snapshot,
+          });
+          if (cancelled) return;
+          if (matches.length) {
+            parts.push(notesContext(matches));
+            srcs.push(...matches.map((m) => ({ name: m.name, path: m.path })));
+          }
+          if (parts.length) system += parts.join("");
+          if (srcs.length) sources = srcs;
+        }
+
+        patchTurn({ working: "Waiting for model…" });
+        if (import.meta.env.DEV) {
+          console.debug("[ai timing]", {
+            phase: "context-preparation",
+            durationMs: Math.round(performance.now() - prepareStartedAt),
+            filesRead: snapshot.size,
+          });
+        }
+        const handle = stream(
+          system,
+          history,
+          model,
+          {
+            onDelta: (delta) =>
+              flightIsActive(chatId, aTurn.id)
+                ? chats.updateTurns(chatId, (prev) =>
+                    prev.map((t) =>
+                      t.id === aTurn.id
+                        ? { ...t, content: t.content + delta, working: undefined }
+                        : t,
+                    ),
+                  )
+                : undefined,
+            onDone: (fullText) => {
+              if (!flightIsActive(chatId, aTurn.id)) return;
+              finishFlight(chatId, aTurn.id);
+              chats.updateTurns(chatId, (prev) =>
+                prev.map((t) =>
+                  t.id === aTurn.id
+                    ? {
+                        ...t,
+                        content: fullText || t.content,
+                        streaming: false,
+                        working: undefined,
+                        sources,
+                      }
+                    : t,
+                ),
+              );
+            },
+            onError: (_kind, message) => {
+              if (!flightIsActive(chatId, aTurn.id)) return;
+              finishFlight(chatId, aTurn.id);
+              chats.updateTurns(chatId, (prev) =>
+                prev.map((t) =>
+                  t.id === aTurn.id
+                    ? { ...t, content: message, streaming: false, working: undefined, error: true }
+                    : t,
+                ),
+              );
+            },
           },
-        },
-        supportsEffort ? effort : undefined,
-      );
-      cancelRef.current = handle.cancel;
+          supportsEffort ? effort : undefined,
+        );
+        transportCancel = handle.cancel;
+        if (cancelled) handle.cancel();
+      } catch (error) {
+        if (cancelled || !flightIsActive(chatId, aTurn.id)) return;
+        finishFlight(chatId, aTurn.id);
+        patchTurn({
+          content: error instanceof Error ? error.message : "Couldn’t prepare this request.",
+          streaming: false,
+          working: undefined,
+          error: true,
+        });
+      }
     },
     [
-      busy,
       scope,
       activePath,
       activeTitle,
@@ -299,6 +424,9 @@ export function AIChatPanel({
       activeAiAccess,
       stream,
       chats,
+      startFlight,
+      finishFlight,
+      flightIsActive,
     ],
   );
 
@@ -307,8 +435,8 @@ export function AIChatPanel({
   // end, chips for every file it created, updated, or moved.
   const runSkill = useCallback(
     (skill: VaultSkill) => {
-      if (busy) return;
       const chatId = chats.activeId;
+      if (flightsRef.current.has(chatId)) return;
       const say = (content: string): void =>
         chats.updateTurns(chatId, (prev) => [
           ...prev,
@@ -339,7 +467,6 @@ export function AIChatPanel({
         working: "Reading the vault guide…",
       };
       chats.updateTurns(chatId, (prev) => [...prev, userTurn, aTurn]);
-      setBusy(true);
       recordActivity({
         type: "ask",
         path: activePath ?? "",
@@ -351,6 +478,25 @@ export function AIChatPanel({
         chats.updateTurns(chatId, (prev) =>
           prev.map((t) => (t.id === aTurn.id ? { ...t, ...p } : t)),
         );
+      let transportCancel: (() => void) | null = null;
+      const cancel = (): void => {
+        if (!flightIsActive(chatId, aTurn.id)) return;
+        transportCancel?.();
+        finishFlight(chatId, aTurn.id);
+        chats.updateTurns(chatId, (prev) =>
+          prev.map((turn) =>
+            turn.id === aTurn.id
+              ? {
+                  ...turn,
+                  content: turn.content || "Stopped.",
+                  streaming: false,
+                  working: undefined,
+                }
+              : turn,
+          ),
+        );
+      };
+      startFlight(chatId, { turnId: aTurn.id, cancel });
       // Route the run to a model tier (Haiku/Sonnet/Opus) per the chosen run
       // mode; non-Claude providers have no ladder and keep the chat model.
       const runModel = agentModelFor(preset, model, runMode);
@@ -363,23 +509,27 @@ export function AIChatPanel({
         },
         {
           onDelta: (delta) =>
-            chats.updateTurns(chatId, (prev) =>
-              prev.map((t) => (t.id === aTurn.id ? { ...t, content: t.content + delta } : t)),
-            ),
+            flightIsActive(chatId, aTurn.id)
+              ? chats.updateTurns(chatId, (prev) =>
+                  prev.map((t) => (t.id === aTurn.id ? { ...t, content: t.content + delta } : t)),
+                )
+              : undefined,
           onTool: (action, path) =>
-            patch({
-              working:
-                action === "write"
-                  ? `Editing ${path}…`
-                  : action === "move"
-                    ? `Moving ${path}…`
-                    : action === "read"
-                      ? `Reading ${path ?? "the vault"}…`
-                      : "Searching the vault…",
-            }),
+            flightIsActive(chatId, aTurn.id)
+              ? patch({
+                  working:
+                    action === "write"
+                      ? `Editing ${path}…`
+                      : action === "move"
+                        ? `Moving ${path}…`
+                        : action === "read"
+                          ? `Reading ${path ?? "the vault"}…`
+                          : "Searching the vault…",
+                })
+              : undefined,
           onDone: (fullText, changed) => {
-            setBusy(false);
-            cancelRef.current = null;
+            if (!flightIsActive(chatId, aTurn.id)) return;
+            finishFlight(chatId, aTurn.id);
             chats.updateTurns(chatId, (prev) =>
               prev.map((t) =>
                 t.id === aTurn.id
@@ -395,16 +545,15 @@ export function AIChatPanel({
             );
           },
           onError: (_kind, message) => {
-            setBusy(false);
-            cancelRef.current = null;
+            if (!flightIsActive(chatId, aTurn.id)) return;
+            finishFlight(chatId, aTurn.id);
             patch({ content: message, streaming: false, working: undefined, error: true });
           },
         },
       );
-      cancelRef.current = handle.cancel;
+      transportCancel = handle.cancel;
     },
     [
-      busy,
       activePath,
       activeTitle,
       activeContent,
@@ -415,6 +564,9 @@ export function AIChatPanel({
       agentRun,
       chats,
       activePrivacyMode,
+      startFlight,
+      finishFlight,
+      flightIsActive,
     ],
   );
 
@@ -432,14 +584,13 @@ export function AIChatPanel({
     }
   }, [seedToken, seedQuery, chats]);
 
-  const stop = useCallback(() => cancelRef.current?.(), []);
+  const stop = useCallback(() => stopChat(chats.activeId), [stopChat, chats.activeId]);
   const newChat = useCallback(() => {
-    stop();
     chats.startNewChat();
     setInput("");
     setHistoryOpen(false);
     inputRef.current?.focus();
-  }, [stop, chats]);
+  }, [chats]);
 
   // "/" skills menu in the composer: open while the whole input is "/query"
   // (no spaces yet). Selecting a row runs the skill and clears the input.
@@ -513,7 +664,8 @@ export function AIChatPanel({
   const disconnected = conn === "disconnected";
 
   const placeholder = useMemo(
-    () => (scope === "page" && activePath ? "Ask about this page…" : "Ask, search, or make anything…"),
+    () =>
+      scope === "page" && activePath ? "Ask about this page…" : "Ask, search, or make anything…",
     [scope, activePath],
   );
 
@@ -536,6 +688,11 @@ export function AIChatPanel({
               onSelect={(id) => {
                 chats.select(id);
                 setHistoryOpen(false);
+              }}
+              busyChatIds={busyChatIds}
+              onDelete={(id) => {
+                stopChat(id);
+                chats.deleteChat(id);
               }}
               onNew={newChat}
               onClose={() => setHistoryOpen(false)}
@@ -561,10 +718,7 @@ export function AIChatPanel({
 
       <div className="ai-scroll" ref={scrollRef}>
         {disconnected ? (
-          <ConnectCard
-            onRecheck={() => void recheck()}
-            onOpenSettings={onOpenSettings}
-          />
+          <ConnectCard onRecheck={() => void recheck()} onOpenSettings={onOpenSettings} />
         ) : empty ? (
           <EmptyState
             checking={conn === "checking" || conn === "unknown"}
@@ -616,7 +770,8 @@ export function AIChatPanel({
                                   : `Updated ${c.path}`
                             }
                           >
-                            <AiIcon name="doc" /> {c.op === "create" ? "+ " : c.op === "move" ? "→ " : ""}
+                            <AiIcon name="doc" />{" "}
+                            {c.op === "create" ? "+ " : c.op === "move" ? "→ " : ""}
                             {c.path}
                           </button>
                         ))}
@@ -792,6 +947,14 @@ function ModelAndEffortPicker({
   const visibleActiveModels = activeModels.length ? activeModels : (activeProvider?.models ?? []);
   const selectedLabel = visibleActiveModels.find((option) => option.id === model)?.label ?? model;
   const effortLabel = EFFORT_OPTIONS.find((option) => option.id === effort)?.label ?? effort;
+  // Keep discovery/setup in Settings. The chat picker is only for providers the
+  // user can use now: the connected active provider and providers with a saved
+  // credential. No-key subscription/local providers become eligible after they
+  // are selected and successfully checked in Settings.
+  const connectedProviders = providers.filter((provider) => {
+    if (provider.id === providerId) return activeConnection !== "disconnected";
+    return keyedProviderIds.includes(provider.id);
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -826,33 +989,15 @@ function ModelAndEffortPicker({
       {open ? (
         <div className="ai-model-menu" role="dialog" aria-label="AI provider and model">
           <div className="ai-model-menu-scroll">
-            {providers.map((provider) => {
+            {connectedProviders.map((provider) => {
               const models = provider.id === providerId ? visibleActiveModels : provider.models;
-              // The active provider has been explicitly chosen in Settings. Other
-              // providers only count as configured when a credential is saved;
-              // no-key subscription/local providers must be selected and checked
-              // in Settings before the chat offers their models.
-              const configured = provider.id === providerId || keyedProviderIds.includes(provider.id);
-              const available = configured && !(provider.id === providerId && activeConnection === "disconnected");
               return (
-                <section className={`ai-model-provider${available ? "" : " is-unavailable"}`} key={provider.id}>
+                <section className="ai-model-provider" key={provider.id}>
                   <div className="ai-model-provider-name">
                     <ProviderLogo id={provider.id} className="ai-provider-mark" />
                     <span>{provider.label}</span>
-                    {!available ? <span className="ai-provider-status">Not connected</span> : null}
                   </div>
-                  {!available ? (
-                    <button
-                      type="button"
-                      className="ai-model-option is-setup"
-                      onClick={() => {
-                        setOpen(false);
-                        onOpenSettings();
-                      }}
-                    >
-                      Connect in provider settings…
-                    </button>
-                  ) : models.length ? (
+                  {models.length ? (
                     models.map((option) => {
                       const selected = provider.id === providerId && option.id === model;
                       return (
@@ -927,12 +1072,16 @@ function ModelAndEffortPicker({
 
 function ChatHistoryMenu({
   chats,
+  busyChatIds,
   onSelect,
+  onDelete,
   onNew,
   onClose,
 }: {
   chats: ChatsController;
+  busyChatIds: ReadonlySet<string>;
   onSelect: (id: string) => void;
+  onDelete: (id: string) => void;
   onNew: () => void;
   onClose: () => void;
 }) {
@@ -970,13 +1119,15 @@ function ChatHistoryMenu({
               onClick={() => onSelect(c.id)}
             >
               <span className="ai-history-name">{c.title || "Untitled chat"}</span>
-              <span className="ai-history-time">{relTime(c.updatedAt)}</span>
+              <span className="ai-history-time">
+                {busyChatIds.has(c.id) ? "Running…" : relTime(c.updatedAt)}
+              </span>
               <button
                 className="ai-history-del"
                 title="Delete chat"
                 onClick={(e) => {
                   e.stopPropagation();
-                  chats.deleteChat(c.id);
+                  onDelete(c.id);
                 }}
               >
                 ×

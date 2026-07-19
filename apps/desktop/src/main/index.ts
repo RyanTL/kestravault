@@ -12,6 +12,7 @@ import {
   removeVault,
   readTree,
   readFile,
+  readFiles,
   writeFile,
   readPrivacyRules,
   setEntryPrivacy,
@@ -29,6 +30,7 @@ import {
   aiStatus,
   resetAiStatus,
   listAiModels,
+  shutdownAi,
   type AiSendRequest,
   type AiProviderConfig,
 } from "./ai.js";
@@ -185,6 +187,7 @@ function registerVaultIpc(): void {
     return clearEntryPrivacy(path, target).then(() => scheduleSync());
   });
   ipcMain.handle("file:read", (_e, relPath: string) => readFile(relPath));
+  ipcMain.handle("file:read-many", (_e, paths: string[]) => readFiles(paths));
   ipcMain.handle("file:write", (_e, relPath: string, content: string) =>
     writeFile(relPath, content),
   );
@@ -445,4 +448,8 @@ void app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
+});
+
+app.on("before-quit", () => {
+  void shutdownAi();
 });

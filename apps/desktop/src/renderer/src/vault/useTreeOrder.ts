@@ -9,8 +9,10 @@ import { baseName } from "@renderer/vault/paths";
 // ordered list of its child *basenames* (so the order survives a parent rename
 // and never clashes between a folder "foo" and a note "foo.md").
 export type OrderMap = Record<string, string[]>;
+export type TreeSortMode = "custom" | "name-asc" | "name-desc";
 
 const STORAGE_KEY = "kestravault.tree.order";
+const SORT_STORAGE_KEY = "kestravault.tree.sort";
 
 function load(): OrderMap {
   try {
@@ -19,6 +21,17 @@ function load(): OrderMap {
     return parsed && typeof parsed === "object" ? (parsed as OrderMap) : {};
   } catch {
     return {};
+  }
+}
+
+function loadSortMode(): TreeSortMode {
+  try {
+    const stored = localStorage.getItem(SORT_STORAGE_KEY);
+    return stored === "name-asc" || stored === "name-desc" || stored === "custom"
+      ? stored
+      : "name-asc";
+  } catch {
+    return "name-asc";
   }
 }
 
@@ -36,10 +49,20 @@ function defaultCompare(a: VaultNode, b: VaultNode): number {
  * new (created since the order was saved) keeps the default folders-first
  * alphabetical order after them.
  */
-export function sortTree(nodes: VaultNode[], order: OrderMap, dir = ""): VaultNode[] {
+export function sortTree(
+  nodes: VaultNode[],
+  order: OrderMap,
+  dir = "",
+  mode: TreeSortMode = "custom",
+): VaultNode[] {
   const saved = order[dir];
   const sorted = [...nodes].sort(defaultCompare);
-  if (saved && saved.length) {
+  if (mode === "name-desc") {
+    sorted.sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === "dir" ? -1 : 1;
+      return b.name.localeCompare(a.name, undefined, { sensitivity: "base" });
+    });
+  } else if (mode === "custom" && saved && saved.length) {
     const rank = new Map(saved.map((name, i) => [name, i]));
     sorted.sort((a, b) => {
       const ia = rank.get(baseName(a.path));
@@ -51,12 +74,13 @@ export function sortTree(nodes: VaultNode[], order: OrderMap, dir = ""): VaultNo
     });
   }
   return sorted.map((n) =>
-    n.kind === "dir" ? { ...n, children: sortTree(n.children, order, n.path) } : n,
+    n.kind === "dir" ? { ...n, children: sortTree(n.children, order, n.path, mode) } : n,
   );
 }
 
 export function useTreeOrder() {
   const [order, setOrder] = useState<OrderMap>(load);
+  const [sortMode, setSortMode] = useState<TreeSortMode>(loadSortMode);
 
   useEffect(() => {
     try {
@@ -65,6 +89,14 @@ export function useTreeOrder() {
       /* storage full / unavailable — ordering just won't persist */
     }
   }, [order]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SORT_STORAGE_KEY, sortMode);
+    } catch {
+      /* storage unavailable — sorting just won't persist */
+    }
+  }, [sortMode]);
 
   /**
    * Persist a sibling order for a single folder. `siblings` is that folder's
@@ -101,5 +133,5 @@ export function useTreeOrder() {
     [],
   );
 
-  return { order, place };
+  return { order, place, sortMode, setSortMode };
 }

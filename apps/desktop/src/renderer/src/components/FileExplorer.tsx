@@ -3,19 +3,26 @@ import type { PrivacyMode, PrivacyTarget, EffectivePrivacy } from "@kestravault/
 import type { VaultInfo, VaultNode } from "@renderer/vault/types";
 import { baseName, dirName, noteName } from "@renderer/vault/paths";
 import { VaultSwitcher } from "@renderer/components/VaultSwitcher";
-import { sortTree, useTreeOrder } from "@renderer/vault/useTreeOrder";
 import {
+  sortTree,
+  useTreeOrder,
+  type TreeSortMode,
+} from "@renderer/vault/useTreeOrder";
+import {
+  ArrowDownAZ,
+  Check,
   ChevronRight,
-  FolderPlus,
-  FilePlus,
-  Lock,
+  ChevronsDownUp,
+  CircleHelp,
   CloudOff,
   FileText,
-  Users,
+  FolderPlus,
+  Lock,
   Plus,
+  SquarePen,
   SquareCheckBig,
   Trash2,
-  CircleHelp,
+  Users,
 } from "lucide-react";
 
 function ChevronIcon() {
@@ -50,11 +57,11 @@ function PrivacyTreeIcon({ privacy }: { privacy: EffectivePrivacy }) {
 }
 
 function FolderPlusIcon() {
-  return <FolderPlus size={15} strokeWidth={1.6} aria-hidden />;
+  return <FolderPlus size={18} strokeWidth={1.7} aria-hidden />;
 }
 
 function NotePlusIcon() {
-  return <FilePlus size={15} strokeWidth={1.6} aria-hidden />;
+  return <SquarePen size={18} strokeWidth={1.7} aria-hidden />;
 }
 
 // One collapsible sidebar group (Notion's Recents / Shared / Private). The
@@ -92,9 +99,9 @@ function Section({
           <ChevronRight size={11} strokeWidth={2} aria-hidden />
         </span>
         {actions ? (
-          <span className="side-section-actions" onClick={(e) => e.stopPropagation()}>
+          <div className="side-section-actions" onClick={(e) => e.stopPropagation()}>
             {actions}
-          </span>
+          </div>
         ) : null}
       </div>
       {!collapsed ? children : null}
@@ -113,6 +120,18 @@ function loadCollapsedSections(): Set<string> {
     return new Set();
   }
 }
+
+function collectFolderPaths(nodes: VaultNode[]): string[] {
+  return nodes.flatMap((node) =>
+    node.kind === "dir" ? [node.path, ...collectFolderPaths(node.children)] : [],
+  );
+}
+
+const SORT_OPTIONS: { mode: TreeSortMode; label: string }[] = [
+  { mode: "name-asc", label: "File name (A to Z)" },
+  { mode: "name-desc", label: "File name (Z to A)" },
+  { mode: "custom", label: "Custom order" },
+];
 
 interface FileExplorerProps {
   tree: VaultNode[];
@@ -164,6 +183,26 @@ interface MenuState {
   node: VaultNode | null; // null = root / empty space
 }
 
+interface Size {
+  width: number;
+  height: number;
+}
+
+/** Keep a context menu wholly inside the window, opening it upward/leftward as needed. */
+export function fitMenuToViewport(
+  origin: { x: number; y: number },
+  menuSize: Size,
+  viewportSize: Size,
+  margin = 8,
+): { x: number; y: number } {
+  const maxX = Math.max(margin, viewportSize.width - menuSize.width - margin);
+  const maxY = Math.max(margin, viewportSize.height - menuSize.height - margin);
+  return {
+    x: Math.min(Math.max(origin.x, margin), maxX),
+    y: Math.min(Math.max(origin.y, margin), maxY),
+  };
+}
+
 // Where a drop will land: next to a reference row (reorder) or inside a folder.
 //  - "before"/"after": insert as a sibling, just above/below `ref`, in `dir`.
 //  - "into": drop inside the folder `dir` (ref === dir).
@@ -176,12 +215,13 @@ interface DropIntent {
 
 export function FileExplorer(props: FileExplorerProps) {
   const { tree, vaultName, selectedPath, revealPath, revealNonce, onSelect, onReveal } = props;
-  const { order, place } = useTreeOrder();
+  const { order, place, sortMode, setSortMode } = useTreeOrder();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   // Collapsed sidebar sections (Recents / Shared / Private), persisted.
   const [closedSections, setClosedSections] = useState<Set<string>>(loadCollapsedSections);
   // The small panel popped up from the bottom menu ("trash" or "help").
   const [bottomPanel, setBottomPanel] = useState<"trash" | "help" | null>(null);
+  const [sortOpen, setSortOpen] = useState(false);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -196,12 +236,31 @@ export function FileExplorer(props: FileExplorerProps) {
   const [dragging, setDragging] = useState<VaultNode | null>(null);
   const [flashPath, setFlashPath] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLUListElement | null>(null);
+  const sortRef = useRef<HTMLDivElement | null>(null);
   // A floating "lifted" chip used as the native drag image while moving a note.
   const dragGhostRef = useRef<HTMLElement | null>(null);
 
   // The tree with the user's manual ordering applied on top of the on-disk
   // (folders-first, alphabetical) order.
-  const orderedTree = useMemo(() => sortTree(tree, order), [tree, order]);
+  const orderedTree = useMemo(() => sortTree(tree, order, "", sortMode), [tree, order, sortMode]);
+  const folderPaths = useMemo(() => collectFolderPaths(tree), [tree]);
+
+  useEffect(() => {
+    if (!sortOpen) return;
+    const close = (event: MouseEvent): void => {
+      if (!sortRef.current?.contains(event.target as Node)) setSortOpen(false);
+    };
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") setSortOpen(false);
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [sortOpen]);
 
   // Each folder's children in display order, keyed by folder path ("" = root).
   // Used to compute insertion indices when reordering.
@@ -422,7 +481,7 @@ export function FileExplorer(props: FileExplorerProps) {
 
   async function handleDelete(node: VaultNode): Promise<void> {
     const what = node.kind === "dir" ? `folder "${node.name}" and everything in it` : `"${node.name}"`;
-    if (!window.confirm(`Delete ${what}? This can't be undone.`)) return;
+    if (!window.confirm(`Delete ${what}? It will be moved to your system Trash.`)) return;
     await props.onDelete(node.path);
   }
 
@@ -457,12 +516,12 @@ export function FileExplorer(props: FileExplorerProps) {
       if (node) return handleDelete(node);
       // Not currently visible (e.g. inside a collapsed folder) — delete the one
       // path directly rather than falling into the plural "Delete 1 notes" dialog.
-      if (!window.confirm(`Delete this note? This can't be undone.`)) return;
+      if (!window.confirm("Delete this note? It will be moved to your system Trash.")) return;
       await props.onDelete(only);
       setMultiSel(new Set());
       return;
     }
-    if (!window.confirm(`Delete ${paths.length} notes? This can't be undone.`)) return;
+    if (!window.confirm(`Delete ${paths.length} notes? They will be moved to your system Trash.`)) return;
     for (const p of paths) await props.onDelete(p);
     setMultiSel(new Set());
   }
@@ -523,6 +582,21 @@ export function FileExplorer(props: FileExplorerProps) {
       window.removeEventListener("contextmenu", close);
       window.removeEventListener("keydown", onKey);
     };
+  }, [menu]);
+
+  // The menu's height depends on the selected item, so measure it after render
+  // and move it away from any viewport edge before the browser paints it.
+  useLayoutEffect(() => {
+    const element = menuRef.current;
+    if (!menu || !element) return;
+    const rect = element.getBoundingClientRect();
+    const fitted = fitMenuToViewport(
+      menu,
+      { width: rect.width, height: rect.height },
+      { width: window.innerWidth, height: window.innerHeight },
+    );
+    if (fitted.x === menu.x && fitted.y === menu.y) return;
+    setMenu((current) => (current ? { ...current, ...fitted } : null));
   }, [menu]);
 
   function openMenu(e: React.MouseEvent, node: VaultNode | null): void {
@@ -618,6 +692,9 @@ export function FileExplorer(props: FileExplorerProps) {
     const sibs = (childrenByDir.get(targetDir) ?? []).map((n) => baseName(n.path));
     const refBase = intent.mode === "into" ? null : baseName(intent.ref);
     const side = intent.mode === "after" ? "after" : "before";
+    // A deliberate drag defines a manual position, so switch the tree to the
+    // matching sort mode and make the result immediately visible.
+    setSortMode("custom");
     if (sourceDir === targetDir) {
       // Pure reorder — nothing touches the filesystem.
       place(targetDir, sibs, baseName(movedPath), refBase, side);
@@ -831,6 +908,51 @@ export function FileExplorer(props: FileExplorerProps) {
               >
                 <FolderPlusIcon />
               </button>
+              <div className="explorer-sort" ref={sortRef}>
+                <button
+                  className={`icon-btn side-action${sortOpen ? " is-active" : ""}`}
+                  title="Change sort order"
+                  aria-label="Change sort order"
+                  aria-haspopup="menu"
+                  aria-expanded={sortOpen}
+                  onClick={() => setSortOpen((open) => !open)}
+                >
+                  <ArrowDownAZ size={16} strokeWidth={1.7} aria-hidden />
+                </button>
+                {sortOpen ? (
+                  <div className="explorer-sort-menu" role="menu" aria-label="Sort files">
+                    <div className="explorer-sort-label">Sort order</div>
+                    {SORT_OPTIONS.map((option) => (
+                      <button
+                        key={option.mode}
+                        className="explorer-sort-option"
+                        role="menuitemradio"
+                        aria-checked={sortMode === option.mode}
+                        onClick={() => {
+                          setSortMode(option.mode);
+                          setSortOpen(false);
+                        }}
+                      >
+                        <span className="explorer-sort-check">
+                          {sortMode === option.mode ? (
+                            <Check size={14} strokeWidth={1.9} aria-hidden />
+                          ) : null}
+                        </span>
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <button
+                className="icon-btn side-action"
+                title="Collapse all folders"
+                aria-label="Collapse all folders"
+                disabled={folderPaths.length === 0}
+                onClick={() => setCollapsed(new Set(folderPaths))}
+              >
+                <ChevronsDownUp size={16} strokeWidth={1.7} aria-hidden />
+              </button>
             </>
           }
         >
@@ -933,7 +1055,7 @@ export function FileExplorer(props: FileExplorerProps) {
       </footer>
 
       {menu ? (
-        <ul className="context-menu" style={{ left: menu.x, top: menu.y }}>
+        <ul ref={menuRef} className="context-menu" style={{ left: menu.x, top: menu.y }}>
           {menu.node?.kind === "dir" || menu.node === null ? (
             <>
               <li onClick={() => void createNoteIn(menu.node?.path ?? "")}>New note</li>

@@ -8,6 +8,8 @@ import {
   INLINE_AI_ACTIONS,
   isTemporalQuery,
   timeContext,
+  balancedExcerpt,
+  limitChatHistory,
 } from "@renderer/vault/aiPrompts";
 import type { NoteMatch } from "@renderer/vault/search";
 import type { ActivityContextPayload } from "@renderer/env";
@@ -68,6 +70,32 @@ describe("pageContext", () => {
   it("includes the body for a normal note", () => {
     const out = pageContext("Groceries", NORMAL_NOTE);
     expect(out).toContain("Milk, eggs, and bread");
+  });
+});
+
+describe("chat prompt budgets", () => {
+  it("keeps both ends of an oversized active note", () => {
+    const excerpt = balancedExcerpt(`START${"x".repeat(20_000)}END`, 1_000);
+    expect(excerpt.length).toBe(1_000);
+    expect(excerpt).toContain("START");
+    expect(excerpt).toContain("END");
+    expect(excerpt).toContain("middle omitted");
+  });
+
+  it("keeps the current prompt and newest complete conversation pairs", () => {
+    const messages = [
+      { role: "user" as const, content: "u1".repeat(20) },
+      { role: "assistant" as const, content: "a1".repeat(20) },
+      { role: "user" as const, content: "u2".repeat(10) },
+      { role: "assistant" as const, content: "a2".repeat(10) },
+      { role: "user" as const, content: "current" },
+    ];
+    expect(limitChatHistory(messages, 50)).toEqual(messages.slice(2));
+  });
+
+  it("never truncates the current prompt even when it exceeds the budget", () => {
+    const current = { role: "user" as const, content: "x".repeat(100) };
+    expect(limitChatHistory([current], 10)).toEqual([current]);
   });
 });
 
@@ -138,9 +166,7 @@ describe("timeContext", () => {
       {
         ...EMPTY_CTX,
         today: [{ title: "Q3 Planning", verb: "edited", path: "Q3 Planning.md" }],
-        deadlines: [
-          { title: "Website Redesign", path: "web.md", due: "2026-07-10", daysLeft: 9 },
-        ],
+        deadlines: [{ title: "Website Redesign", path: "web.md", due: "2026-07-10", daysLeft: 9 }],
       },
       now,
     );

@@ -4,8 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // vault.ts imports `electron` at module load; stub the one surface it touches so
 // the module imports cleanly under the node test runner. safeResolve itself is
 // pure (takes root explicitly) and needs none of it.
+const trashItem = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock("electron", () => ({
   app: { getPath: () => "/tmp/kestravault-test" },
+  shell: { trashItem },
 }));
 
 const {
@@ -18,6 +20,8 @@ const {
   setEntryPrivacy,
   clearEntryPrivacy,
   renameEntry,
+  deleteEntry,
+  readFiles,
 } = await import("./vault.js");
 
 const ROOT = "/Users/ryan/KestraVault Vault";
@@ -25,6 +29,7 @@ const TEST_HOME = "/tmp/kestravault-test";
 
 beforeEach(async () => {
   await fs.rm(TEST_HOME, { recursive: true, force: true });
+  trashItem.mockClear();
 });
 
 describe("safeResolve", () => {
@@ -61,7 +66,8 @@ describe("vault privacy", () => {
 
     const tree = await readTree();
     const notes = tree.find((n) => n.kind === "dir" && n.path === "notes");
-    const clients = notes?.kind === "dir" ? notes.children.find((n) => n.path === "notes/clients") : null;
+    const clients =
+      notes?.kind === "dir" ? notes.children.find((n) => n.path === "notes/clients") : null;
     const acme =
       clients?.kind === "dir"
         ? clients.children.find((n) => n.path === "notes/clients/acme.md")
@@ -102,11 +108,35 @@ describe("vault privacy", () => {
     await renameEntry("notes/clients", "notes/accounts");
     const tree = await readTree();
     const notes = tree.find((n) => n.kind === "dir" && n.path === "notes");
-    const accounts = notes?.kind === "dir" ? notes.children.find((n) => n.path === "notes/accounts") : null;
+    const accounts =
+      notes?.kind === "dir" ? notes.children.find((n) => n.path === "notes/accounts") : null;
 
     expect(accounts).toMatchObject({
       kind: "dir",
       privacy: { mode: "local-only", explicit: true },
     });
+  });
+});
+
+describe("deleteEntry", () => {
+  it("moves an existing entry to the system trash", async () => {
+    await ensureVault();
+    await writeFile("notes/delete-me.md", "temporary");
+
+    await deleteEntry("notes/delete-me.md");
+
+    expect(trashItem).toHaveBeenCalledWith(`${TEST_HOME}/KestraVault Vault/notes/delete-me.md`);
+  });
+});
+
+describe("readFiles", () => {
+  it("deduplicates paths and tolerates a file disappearing during the batch", async () => {
+    await ensureVault();
+    await writeFile("notes/a.md", "alpha");
+
+    await expect(readFiles(["notes/a.md", "notes/a.md", "notes/missing.md"])).resolves.toEqual([
+      { path: "notes/a.md", content: "alpha" },
+      { path: "notes/missing.md", content: "" },
+    ]);
   });
 });

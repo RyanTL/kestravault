@@ -195,6 +195,8 @@ window.api = {
       if (content === undefined) throw new Error(`ENOENT: ${path}`);
       return content;
     },
+    readMany: async (paths: string[]) =>
+      paths.map((path) => ({ path, content: FILES[rel(path)] ?? "" })),
     write: async (path: string, content: string) => {
       FILES[rel(path)] = content;
     },

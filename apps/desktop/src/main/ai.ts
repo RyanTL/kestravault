@@ -8,6 +8,7 @@ import { vaultRoot } from "./vault.js";
 import { getSecret, keyFingerprint } from "./secrets.js";
 import { resolveClaudeExecutable } from "./claudeBinary.js";
 import { codexLoggedIn, resetCodexCache, resolveCodexExecutable } from "./codexBinary.js";
+import { codexAppServer } from "./codexAppServer.js";
 
 // ── KestraVault AI bridge ────────────────────────────────────────────────────────
 // KestraVault is open source and "bring your own model": the AI features run on
@@ -256,7 +257,9 @@ async function runCodex(
   if (!exe) throw new Error("codex_not_installed");
 
   const body = composePrompt(req.messages);
-  const prompt = req.system ? `Instructions for this conversation:\n${req.system}\n\n${body}` : body;
+  const prompt = req.system
+    ? `Instructions for this conversation:\n${req.system}\n\n${body}`
+    : body;
   const cwd = await fs.mkdtemp(join(tmpdir(), "kestravault-codex-"));
 
   const args = ["exec", "--json", "--skip-git-repo-check", "--sandbox", "read-only"];
@@ -321,6 +324,36 @@ async function runCodex(
     });
   } finally {
     await fs.rm(cwd, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+async function runChatGptSubscription(
+  req: AiSendRequest,
+  controller: AbortController,
+  onDelta: (t: string) => void,
+): Promise<void> {
+  let streamed = false;
+  try {
+    await codexAppServer.run({
+      prompt: composePrompt(req.messages),
+      system: req.system,
+      model: req.model,
+      effort: req.effort,
+      signal: controller.signal,
+      onDelta: (text) => {
+        streamed = true;
+        onDelta(text);
+      },
+    });
+  } catch (error) {
+    if (controller.signal.aborted) throw error;
+    if (streamed) {
+      onDelta("\n\n_Response interrupted. Retry to continue._");
+      return;
+    }
+    // Older/incompatible Codex builds keep working through the existing CLI
+    // path. Only fall back before output starts to avoid duplicate answers.
+    await runCodex(req, controller, onDelta);
   }
 }
 
@@ -509,7 +542,7 @@ export function friendly(kind: AiErrorKind, raw: string, provider: AiProviderCon
   if (provider.kind === "openai-sub" && /newer version of codex/i.test(raw)) {
     return (
       "Your Codex CLI is too old for this model. Update it (`npm install -g @openai/codex@latest`) " +
-      "and try again — or pick “Default (Codex)” in the model picker to use whatever your CLI supports."
+      "and try again, or choose another explicit model in the model picker."
     );
     return "The provider rejected the request — check your API key and base URL in Settings → AI model.";
   }
@@ -526,9 +559,17 @@ export function friendly(kind: AiErrorKind, raw: string, provider: AiProviderCon
 
 // In-flight requests, so the renderer can cancel a stream by id.
 const inflight = new Map<string, AbortController>();
+const AI_REQUEST_TIMEOUT_MS = 120_000;
 
 export async function runAiRequest(win: BrowserWindow, req: AiSendRequest): Promise<void> {
+  const startedAt = Date.now();
+  let firstDeltaAt: number | null = null;
   const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, AI_REQUEST_TIMEOUT_MS);
   inflight.set(req.requestId, controller);
   const provider = providerOf(req);
   const send = (e: AiEvent): void => {
@@ -538,6 +579,7 @@ export async function runAiRequest(win: BrowserWindow, req: AiSendRequest): Prom
   // abort still surfaces whatever arrived so far.
   let full = "";
   const onDelta = (text: string): void => {
+    firstDeltaAt ??= Date.now();
     full += text;
     send({ requestId: req.requestId, type: "delta", text });
   };
@@ -548,21 +590,41 @@ export async function runAiRequest(win: BrowserWindow, req: AiSendRequest): Prom
     } else if (provider.kind === "openai") {
       await runOpenAi(req, provider, controller, onDelta);
     } else if (provider.kind === "openai-sub") {
-      await runCodex(req, controller, onDelta);
+      await runChatGptSubscription(req, controller, onDelta);
     } else {
       await runSubscription(req, controller, onDelta);
     }
     send({ requestId: req.requestId, type: "done", text: full });
+    if (process.env["NODE_ENV"] === "development") {
+      console.debug("[ai timing]", {
+        provider: provider.kind,
+        firstDeltaMs: firstDeltaAt === null ? null : firstDeltaAt - startedAt,
+        totalMs: Date.now() - startedAt,
+      });
+    }
   } catch (err) {
     const raw = err instanceof Error ? err.message : String(err);
-    const kind = controller.signal.aborted ? "aborted" : classifyError(raw);
-    if (kind === "aborted") {
+    const kind = controller.signal.aborted && !timedOut ? "aborted" : classifyError(raw);
+    if (timedOut) {
+      send({
+        requestId: req.requestId,
+        type: "error",
+        kind: "unknown",
+        message: "The model took too long to respond. Try again or switch to a faster model.",
+      });
+    } else if (kind === "aborted") {
       // A user-initiated cancel still keeps whatever streamed so far.
       send({ requestId: req.requestId, type: "done", text: full });
     } else {
-      send({ requestId: req.requestId, type: "error", kind, message: friendly(kind, raw, provider) });
+      send({
+        requestId: req.requestId,
+        type: "error",
+        kind,
+        message: friendly(kind, raw, provider),
+      });
     }
   } finally {
+    clearTimeout(timeout);
     inflight.delete(req.requestId);
   }
 }
@@ -656,6 +718,7 @@ export async function aiStatus(provider?: AiProviderConfig, force = false): Prom
             detail: "Open a terminal, run `codex`, and sign in with your ChatGPT account.",
           };
     statusCache.set(sig, status);
+    if (status.connected) void codexAppServer.prewarm().catch(() => undefined);
     return status;
   }
 
@@ -696,6 +759,11 @@ export async function aiStatus(provider?: AiProviderConfig, force = false): Prom
 export function resetAiStatus(): void {
   statusCache.clear();
   modelCache.clear();
+}
+
+/** Stop the persistent ChatGPT-subscription transport during app shutdown. */
+export async function shutdownAi(): Promise<void> {
+  await codexAppServer.stop();
 }
 
 // ── Live model discovery ─────────────────────────────────────────────────────

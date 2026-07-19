@@ -1,7 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
 import { AiIcon } from "@renderer/components/AiIcons";
 import { ProviderLogo } from "@renderer/components/ProviderLogo";
-import { Sparkles, Sun, Info, Activity, RefreshCw, Brain, Check, CircleAlert, LoaderCircle, Play, ChevronDown } from "lucide-react";
+import {
+  Sparkles,
+  Sun,
+  Info,
+  Activity,
+  RefreshCw,
+  Brain,
+  Check,
+  CircleAlert,
+  LoaderCircle,
+  Play,
+  ChevronDown,
+} from "lucide-react";
 import { INSTRUCTIONS_PATH } from "@renderer/vault/brain";
 import {
   readCustomSkills,
@@ -134,36 +146,57 @@ function providerDisplayName(id: string, label: string): string {
 
 type TestState = { kind: "idle" | "testing" } | { kind: "ok" } | { kind: "fail"; detail: string };
 
+// Keep verified providers marked while Settings is closed and reopened. This is
+// intentionally session-only: app restarts and failed checks re-establish truth.
+const connectedProviderCache = new Set<string>();
+
 function AiSettings({ settings, ai }: { settings: SettingsController; ai: AiController }) {
-  const {
-    preset,
-    providerId,
-    model,
-    models,
-    baseUrl,
-    hasKey,
-    keyVersion,
-    encryptionAvailable,
-    setProvider,
-    setProviderField,
-    setKey,
-    clearKey,
-  } = settings;
+  // This is only the card being configured. It must never select a provider in
+  // the chat panel behind the modal.
+  const [selectedProviderId, setSelectedProviderId] = useState(settings.providerId);
+  const { preset, model, models, baseUrl, hasKey } = settings.providerDetails(selectedProviderId);
+  const { encryptionAvailable, setProviderFieldFor, setKeyFor } = settings;
   const [showKey, setShowKey] = useState(false);
   const [keyDraft, setKeyDraft] = useState("");
   const [savingKey, setSavingKey] = useState(false);
-  const [test, setTest] = useState<TestState>({ kind: "idle" });
-  const connected = ai.conn === "connected";
+  const [tests, setTests] = useState<Record<string, TestState>>({});
+  const [connectedProviders, setConnectedProviders] = useState<Set<string>>(
+    () =>
+      new Set([
+        ...connectedProviderCache,
+        ...(ai.conn === "connected" ? [settings.providerId] : []),
+      ]),
+  );
+  const test =
+    tests[selectedProviderId] ??
+    (connectedProviders.has(selectedProviderId) ? { kind: "ok" } : { kind: "idle" });
 
-  // Reset the inline test result + key draft whenever the provider changes, and
-  // re-test whenever the saved key changes (keyVersion bumps on save/clear).
-  useEffect(() => setKeyDraft(""), [providerId]);
-  useEffect(() => setTest({ kind: "idle" }), [providerId, model, baseUrl, keyVersion]);
+  function setTest(next: TestState): void {
+    setTests((current) => ({ ...current, [selectedProviderId]: next }));
+  }
+
+  function recordConnection(providerId: string, connected: boolean): void {
+    if (connected) connectedProviderCache.add(providerId);
+    else connectedProviderCache.delete(providerId);
+    setConnectedProviders(new Set(connectedProviderCache));
+  }
+
+  // Preserve each provider's connection result while browsing other cards.
+  // Also seed the chat's already-known connection without making Settings own it.
+  useEffect(() => {
+    if (ai.conn !== "connected") return;
+    connectedProviderCache.add(settings.providerId);
+    setConnectedProviders(new Set(connectedProviderCache));
+  }, [ai.conn, settings.providerId]);
+
+  useEffect(() => setKeyDraft(""), [selectedProviderId]);
 
   async function saveKey(): Promise<void> {
     setSavingKey(true);
     try {
-      await setKey(keyDraft);
+      await setKeyFor(selectedProviderId, keyDraft);
+      recordConnection(selectedProviderId, false);
+      setTest({ kind: "idle" });
       setKeyDraft("");
     } finally {
       setSavingKey(false);
@@ -174,9 +207,15 @@ function AiSettings({ settings, ai }: { settings: SettingsController; ai: AiCont
     // Persist a typed-but-unsaved key first, so "Test" checks what you see.
     if (keyDraft.trim()) await saveKey();
     setTest({ kind: "testing" });
-    const status = await ai.recheck();
-    if (status.connected) setTest({ kind: "ok" });
-    else setTest({ kind: "fail", detail: status.detail ?? "Couldn't connect." });
+    try {
+      const status = await window.api.ai.status(settings.providerConfig(selectedProviderId), true);
+      recordConnection(selectedProviderId, status.connected);
+      if (status.connected) setTest({ kind: "ok" });
+      else setTest({ kind: "fail", detail: status.detail ?? "Couldn't connect." });
+    } catch (error) {
+      recordConnection(selectedProviderId, false);
+      setTest({ kind: "fail", detail: error instanceof Error ? error.message : String(error) });
+    }
   }
 
   const isSub = preset.kind === "subscription" || preset.kind === "openai-sub";
@@ -184,23 +223,31 @@ function AiSettings({ settings, ai }: { settings: SettingsController; ai: AiCont
   return (
     <section className="settings-section">
       <h2 className="settings-h">AI provider</h2>
-      <p className="settings-lead">Choose the service and model KestraVault uses.</p>
+      <p className="settings-lead">
+        Configure providers here. Choose the active provider and model from AI chat.
+      </p>
 
       <div className="provider-grid">
         {PROVIDERS.map((p) => (
           <button
             key={p.id}
-            className={`provider-card${providerId === p.id ? " is-active" : ""}`}
-            onClick={() => setProvider(p.id)}
+            className={`provider-card${selectedProviderId === p.id ? " is-active" : ""}`}
+            onClick={() => setSelectedProviderId(p.id)}
           >
-            {providerId === p.id && connected ? (
+            {connectedProviders.has(p.id) ? (
               <span className="provider-connected-dot" title="Connected" aria-label="Connected" />
             ) : null}
             <ProviderLogo id={p.id} />
             <div className="provider-card-copy">
               <span className="provider-name">{providerDisplayName(p.id, p.label)}</span>
               <span className={`provider-tag${p.local ? " is-local" : ""}`}>
-                {p.kind === "subscription" || p.kind === "openai-sub" ? "Subscription" : p.local ? "On device" : p.id === "custom" ? "Custom" : "API"}
+                {p.kind === "subscription" || p.kind === "openai-sub"
+                  ? "Subscription"
+                  : p.local
+                    ? "On device"
+                    : p.id === "custom"
+                      ? "Custom"
+                      : "API"}
               </span>
             </div>
           </button>
@@ -219,8 +266,8 @@ function AiSettings({ settings, ai }: { settings: SettingsController; ai: AiCont
             ) : (
               <p>
                 Sign in once, the way Claude Code does: open a terminal, run <code>claude</code>,
-                type <code>/login</code>, and choose{" "}
-                <em>“Claude account with subscription.”</em> No API key needed.
+                type <code>/login</code>, and choose <em>“Claude account with subscription.”</em> No
+                API key needed.
               </p>
             )}
           </div>
@@ -278,7 +325,15 @@ function AiSettings({ settings, ai }: { settings: SettingsController; ai: AiCont
                     {savingKey ? "Saving…" : hasKey ? "Replace key" : "Save key"}
                   </button>
                   {hasKey ? (
-                    <button type="button" className="ai-btn-ghost" onClick={() => void clearKey()}>
+                    <button
+                      type="button"
+                      className="ai-btn-ghost"
+                      onClick={() => {
+                        recordConnection(selectedProviderId, false);
+                        setTest({ kind: "idle" });
+                        void setKeyFor(selectedProviderId, "");
+                      }}
+                    >
                       Clear
                     </button>
                   ) : null}
@@ -301,7 +356,11 @@ function AiSettings({ settings, ai }: { settings: SettingsController; ai: AiCont
                 placeholder={preset.defaultBaseUrl || "https://…/v1"}
                 spellCheck={false}
                 autoComplete="off"
-                onChange={(e) => setProviderField("baseUrl", e.target.value)}
+                onChange={(e) => {
+                  recordConnection(selectedProviderId, false);
+                  setTest({ kind: "idle" });
+                  setProviderFieldFor(selectedProviderId, "baseUrl", e.target.value);
+                }}
               />
             </label>
           </>
@@ -318,7 +377,7 @@ function AiSettings({ settings, ai }: { settings: SettingsController; ai: AiCont
               placeholder={preset.defaultModel || "model id"}
               spellCheck={false}
               autoComplete="off"
-              onChange={(e) => setProviderField("model", e.target.value)}
+              onChange={(e) => setProviderFieldFor(selectedProviderId, "model", e.target.value)}
             />
             <ChevronDown className="model-input-chevron" size={17} strokeWidth={1.8} aria-hidden />
           </div>
@@ -335,7 +394,7 @@ function AiSettings({ settings, ai }: { settings: SettingsController; ai: AiCont
                 <button
                   key={m.id}
                   className={`model-chip${model === m.id ? " is-active" : ""}`}
-                  onClick={() => setProviderField("model", m.id)}
+                  onClick={() => setProviderFieldFor(selectedProviderId, "model", m.id)}
                 >
                   {m.label}
                 </button>
@@ -361,11 +420,35 @@ function AiSettings({ settings, ai }: { settings: SettingsController; ai: AiCont
         <div className={`connection-check is-${test.kind}`}>
           <div className="connection-check-state" aria-live="polite">
             <span className="connection-check-icon">
-              {test.kind === "testing" ? <LoaderCircle size={15} /> : test.kind === "ok" ? <Check size={15} /> : test.kind === "fail" ? <CircleAlert size={15} /> : <span className="connection-dot" />}
+              {test.kind === "testing" ? (
+                <LoaderCircle size={15} />
+              ) : test.kind === "ok" ? (
+                <Check size={15} />
+              ) : test.kind === "fail" ? (
+                <CircleAlert size={15} />
+              ) : (
+                <span className="connection-dot" />
+              )}
             </span>
             <span>
-              <strong>{test.kind === "testing" ? "Checking setup…" : test.kind === "ok" ? "Ready to use" : test.kind === "fail" ? "Connection failed" : "Connection"}</strong>
-              <small>{test.kind === "fail" ? test.detail : test.kind === "ok" ? `${providerDisplayName(preset.id, preset.label)} is connected` : test.kind === "idle" ? "Verify these settings before using AI" : "Contacting the provider"}</small>
+              <strong>
+                {test.kind === "testing"
+                  ? "Checking setup…"
+                  : test.kind === "ok"
+                    ? "Ready to use"
+                    : test.kind === "fail"
+                      ? "Connection failed"
+                      : "Connection"}
+              </strong>
+              <small>
+                {test.kind === "fail"
+                  ? test.detail
+                  : test.kind === "ok"
+                    ? `${providerDisplayName(preset.id, preset.label)} is connected`
+                    : test.kind === "idle"
+                      ? "Verify these settings before using AI"
+                      : "Contacting the provider"}
+              </small>
             </span>
           </div>
           <button
@@ -374,7 +457,11 @@ function AiSettings({ settings, ai }: { settings: SettingsController; ai: AiCont
             disabled={test.kind === "testing"}
           >
             {test.kind !== "testing" ? <Play size={12} fill="currentColor" /> : null}
-            {test.kind === "testing" ? "Checking…" : test.kind === "idle" ? "Check now" : "Check again"}
+            {test.kind === "testing"
+              ? "Checking…"
+              : test.kind === "idle"
+                ? "Check now"
+                : "Check again"}
           </button>
         </div>
       </div>
@@ -440,8 +527,16 @@ function BrainSettings({
         like any note, or let the AI restructure and re-index everything for you.
       </p>
 
-      {error ? <div className="field-note field-warn"><p>{error}</p></div> : null}
-      {notice && !dirty ? <div className="field-note"><p>{notice}</p></div> : null}
+      {error ? (
+        <div className="field-note field-warn">
+          <p>{error}</p>
+        </div>
+      ) : null}
+      {notice && !dirty ? (
+        <div className="field-note">
+          <p>{notice}</p>
+        </div>
+      ) : null}
 
       {text === null ? (
         <div className="settings-fields">
@@ -785,8 +880,16 @@ function SyncSettings({ vaultName }: { vaultName: string }) {
         self-hosted server — the entire backend is open source.
       </p>
 
-      {error ? <div className="field-note field-warn"><p>{error}</p></div> : null}
-      {notice ? <div className="field-note"><p>{notice}</p></div> : null}
+      {error ? (
+        <div className="field-note field-warn">
+          <p>{error}</p>
+        </div>
+      ) : null}
+      {notice ? (
+        <div className="field-note">
+          <p>{notice}</p>
+        </div>
+      ) : null}
 
       {/* ── Server ── */}
       <div className="settings-fields">
@@ -806,7 +909,9 @@ function SyncSettings({ vaultName }: { vaultName: string }) {
               <button
                 key={m}
                 className={`seg-btn${config?.mode === m ? " is-active" : ""}`}
-                onClick={() => void run(async () => void (await window.api.sync.setConfig({ mode: m })))}
+                onClick={() =>
+                  void run(async () => void (await window.api.sync.setConfig({ mode: m })))
+                }
               >
                 {m === "hosted" ? "Cloud" : "Self-hosted"}
               </button>
@@ -820,7 +925,12 @@ function SyncSettings({ vaultName }: { vaultName: string }) {
               <p>
                 Run the whole KestraVault backend on your own hardware — the entire stack is open
                 source.{" "}
-                <a href={SELF_HOST_GUIDE_URL} target="_blank" rel="noreferrer" className="field-link">
+                <a
+                  href={SELF_HOST_GUIDE_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="field-link"
+                >
                   Self-hosting guide →
                 </a>
               </p>
@@ -841,7 +951,8 @@ function SyncSettings({ vaultName }: { vaultName: string }) {
             </label>
             <label className="field">
               <span className="field-label">
-                Anon key{config?.hasSelfHostKey ? <span className="field-saved">✓ Saved</span> : null}
+                Anon key
+                {config?.hasSelfHostKey ? <span className="field-saved">✓ Saved</span> : null}
               </span>
               <input
                 className="field-input"
@@ -1085,8 +1196,8 @@ function SyncSettings({ vaultName }: { vaultName: string }) {
                   <div className="field-row-text">
                     <span className="field-label">Push this vault to the cloud</span>
                     <span className="field-hint">
-                      Creates a cloud vault named “{vaultName}” from your current notes and
-                      keeps it synced across your devices.
+                      Creates a cloud vault named “{vaultName}” from your current notes and keeps it
+                      synced across your devices.
                     </span>
                   </div>
                   <button
@@ -1335,10 +1446,10 @@ function ActivitySettings({ settings }: { settings: SettingsController }) {
     <section className="settings-section">
       <h2 className="settings-h">Activity</h2>
       <p className="settings-lead">
-        KestraVault keeps a <strong>private, on-device</strong> log of what you open and edit so the AI
-        can answer questions like <em>“what did I work on yesterday?”</em> and reason about how much
-        time is left on your projects. It never leaves your computer, and the contents of your notes
-        are never logged.
+        KestraVault keeps a <strong>private, on-device</strong> log of what you open and edit so the
+        AI can answer questions like <em>“what did I work on yesterday?”</em> and reason about how
+        much time is left on your projects. It never leaves your computer, and the contents of your
+        notes are never logged.
       </p>
 
       <div className="settings-fields">
@@ -1456,7 +1567,6 @@ function AboutSettings({
             Reveal in Finder
           </button>
         </div>
-
       </div>
     </section>
   );

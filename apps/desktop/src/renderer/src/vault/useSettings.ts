@@ -59,11 +59,11 @@ export const PROVIDERS: ProviderPreset[] = [
     kind: "openai-sub",
     needsKey: false,
     models: [
-      { id: "", label: "Default (Codex)" },
-      { id: "gpt-5.6", label: "GPT-5.6" },
+      { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
       { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
+      { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
     ],
-    defaultModel: "",
+    defaultModel: "gpt-5.6-sol",
     blurb: "Reuses your ChatGPT login via the Codex CLI. No API key — sign in once with codex.",
     setupUrl: "https://developers.openai.com/codex/cli",
   },
@@ -91,7 +91,7 @@ export const PROVIDERS: ProviderPreset[] = [
     defaultBaseUrl: "https://api.openai.com/v1",
     needsKey: true,
     models: [
-      { id: "gpt-5.6", label: "GPT-5.6" },
+      { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
       { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
       { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
     ],
@@ -188,7 +188,10 @@ export interface Appearance {
 }
 
 interface PersistedSettings {
+  /** Provider used by the chat composer. Settings may inspect other providers without changing it. */
   providerId: string;
+  /** Model used by chat, deliberately separate from each provider's configured default. */
+  chatModel: string;
   byProvider: Record<string, ProviderState>;
   appearance: Appearance;
   /** Reasoning effort for models that support it (see EFFORT_OPTIONS). */
@@ -229,6 +232,7 @@ const RUN_MODE_VALUES: RunMode[] = ["light", "default", "deep"];
 
 const DEFAULTS: PersistedSettings = {
   providerId: "claude-sub",
+  chatModel: "sonnet",
   byProvider: {},
   appearance: { theme: "dark", fontSize: 16, lineWidth: 740, showWordCount: true },
   effort: "high",
@@ -287,12 +291,23 @@ function load(): { settings: PersistedSettings; legacyKeys: Record<string, strin
       const legacyKeys: Record<string, string> = {};
       for (const [id, ps] of Object.entries(rawByProvider)) {
         const { apiKey, ...rest } = ps ?? {};
+        // Older builds offered an empty Codex default and a generic GPT-5.6
+        // alias. Both now migrate to the explicit Sol variant.
+        if (id === "chatgpt-sub" && (!rest.model || rest.model === "gpt-5.6")) {
+          rest.model = "gpt-5.6-sol";
+        }
+        if (id === "openai" && rest.model === "gpt-5.6") rest.model = "gpt-5.6-sol";
         byProvider[id] = rest;
         if (apiKey) legacyKeys[id] = apiKey;
       }
       return {
         settings: {
           providerId: getPreset(parsed.providerId ?? "").id,
+          chatModel:
+            typeof parsed.chatModel === "string"
+              ? parsed.chatModel
+              : (byProvider[getPreset(parsed.providerId ?? "").id]?.model ??
+                getPreset(parsed.providerId ?? "").defaultModel),
           byProvider,
           appearance: { ...DEFAULTS.appearance, ...(parsed.appearance ?? {}) },
           effort: EFFORT_OPTIONS.some((o) => o.id === parsed.effort)
@@ -392,8 +407,9 @@ export function useSettings() {
   const preset = useMemo(() => getPreset(state.providerId), [state.providerId]);
   const ps = state.byProvider[state.providerId] ?? {};
 
-  // The model in effect for the current provider (override → preset default).
-  const model = ps.model || preset.defaultModel;
+  // Chat owns its provider/model selection. Provider settings are configuration
+  // records and can be browsed or edited without changing an open conversation.
+  const model = state.chatModel || preset.defaultModel;
   const baseUrl = ps.baseUrl ?? preset.defaultBaseUrl ?? "";
   // Whether the current provider has a key saved (renderer never sees its value).
   const hasKey = savedKeys.has(state.providerId);
@@ -444,19 +460,19 @@ export function useSettings() {
     return reasoningModel && (preset.id === "openai" || preset.id === "openrouter");
   }, [model, preset.id, preset.kind]);
 
-  const setProvider = useCallback((id: string) => {
-    setState((s) => ({ ...s, providerId: getPreset(id).id }));
-  }, []);
-
-  const setProviderField = useCallback((field: keyof ProviderState, value: string) => {
-    setState((s) => {
-      const cur = s.byProvider[s.providerId] ?? {};
-      return {
-        ...s,
-        byProvider: { ...s.byProvider, [s.providerId]: { ...cur, [field]: value } },
-      };
-    });
-  }, []);
+  const setProviderFieldFor = useCallback(
+    (providerId: string, field: keyof ProviderState, value: string) => {
+      setState((s) => {
+        const id = getPreset(providerId).id;
+        const cur = s.byProvider[id] ?? {};
+        return {
+          ...s,
+          byProvider: { ...s.byProvider, [id]: { ...cur, [field]: value } },
+        };
+      });
+    },
+    [],
+  );
 
   /** Switch provider and model as one composer action, avoiding an intermediate stale selection. */
   const setProviderModel = useCallback((providerId: string, model: string) => {
@@ -466,29 +482,53 @@ export function useSettings() {
       return {
         ...s,
         providerId: id,
-        byProvider: { ...s.byProvider, [id]: { ...cur, model } },
+        chatModel: model || cur.model || getPreset(id).defaultModel,
       };
     });
   }, []);
 
-  // Save (non-empty) or clear (empty) the current provider's key. Round-trips to
+  // Save (non-empty) or clear (empty) a provider's key. Round-trips to
   // the main process; the plaintext key never lands in React state or storage.
-  const setKey = useCallback(
-    async (key: string): Promise<void> => {
-      const id = state.providerId;
-      await window.api.secret.set(id, key);
-      setSavedKeys((prev) => {
-        const next = new Set(prev);
-        if (key.trim()) next.add(id);
-        else next.delete(id);
-        return next;
-      });
-      setKeyVersion((v) => v + 1);
+  const setKeyFor = useCallback(async (providerId: string, key: string): Promise<void> => {
+    const id = getPreset(providerId).id;
+    await window.api.secret.set(id, key);
+    setSavedKeys((prev) => {
+      const next = new Set(prev);
+      if (key.trim()) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+    setKeyVersion((v) => v + 1);
+  }, []);
+
+  const providerDetails = useCallback(
+    (providerId: string) => {
+      const selectedPreset = getPreset(providerId);
+      const selectedState = state.byProvider[selectedPreset.id] ?? {};
+      return {
+        preset: selectedPreset,
+        model: selectedState.model || selectedPreset.defaultModel,
+        baseUrl: selectedState.baseUrl ?? selectedPreset.defaultBaseUrl ?? "",
+        hasKey: savedKeys.has(selectedPreset.id),
+        models: selectedPreset.id === state.providerId ? models : selectedPreset.models,
+      };
     },
-    [state.providerId],
+    [models, savedKeys, state.byProvider, state.providerId],
   );
 
-  const clearKey = useCallback((): Promise<void> => setKey(""), [setKey]);
+  const providerConfig = useCallback(
+    (providerId: string): AiProviderConfig => {
+      const details = providerDetails(providerId);
+      if (details.preset.kind === "subscription") return { kind: "subscription" };
+      if (details.preset.kind === "openai-sub") return { kind: "openai-sub" };
+      return {
+        kind: details.preset.kind,
+        providerId: details.preset.id,
+        baseUrl: details.baseUrl,
+      };
+    },
+    [providerDetails],
+  );
 
   // ── Self-host sync server ──
   // The URL persists with the rest of the settings; the anon key rides the
@@ -565,11 +605,11 @@ export function useSettings() {
     syncServerUrl,
     /** Whether an anon key is saved for the sync server. */
     hasSyncKey,
-    setProvider,
     setProviderModel,
-    setProviderField,
-    setKey,
-    clearKey,
+    providerDetails,
+    providerConfig,
+    setProviderFieldFor,
+    setKeyFor,
     setSyncServerUrl,
     setSyncKey,
     clearSyncKey,
