@@ -3876,3 +3876,380 @@ h6.md-h {
   border-radius: 999px;
   padding: 3px 11px;
 }
+
+/* ---- Left sidebar: Notion-style sections + bottom menu + vault footer ----
+   Structure (top → bottom): scrollable sections (Recents / Shared / Private),
+   a fixed bottom menu (My Tasks / Trash / Help), and the vault switcher footer.
+   Everything stays in the monochrome token system. */
+
+.side-scroll {
+  padding: 6px 6px 12px;
+}
+
+/* Scoped to the left pane: .side-section is also the right sidebar's block
+   (which keeps its dividers); here sections separate by whitespace alone. */
+.pane-left .side-section {
+  margin-top: 2px;
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.pane-left .side-section + .side-section {
+  margin-top: 14px;
+}
+
+/* Section header: small faint label, whole row toggles the section. The caret
+   and any actions only surface on hover (Notion's quiet section chrome). */
+.side-section-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.side-section-header:hover {
+  background: var(--bg-hover);
+}
+
+.side-section-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--text-faint);
+}
+
+.side-section-header:hover .side-section-label {
+  color: var(--text-dim);
+}
+
+.side-section-caret {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-faint);
+  opacity: 0;
+  transform: rotate(90deg); /* open: pointing down */
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+}
+
+.side-section-header:hover .side-section-caret {
+  opacity: 1;
+}
+
+/* Collapsed: caret points right and stays visible as the "there's more" cue. */
+.side-section-caret.is-collapsed {
+  opacity: 1;
+  transform: rotate(0deg);
+}
+
+.side-section-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.side-section-header:hover .side-section-actions,
+.side-section-actions:focus-within {
+  opacity: 1;
+}
+
+.icon-btn.side-action {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+}
+
+.icon-btn.side-action svg {
+  width: 13px;
+  height: 13px;
+}
+
+.side-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/* A plain sidebar row (recents, shared, bottom menu) — same rhythm as tree
+   rows but icon-led, like Notion's page rows. */
+.side-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font: inherit;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.side-row:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.side-row.is-active {
+  background: var(--bg-selected);
+  color: var(--text);
+}
+
+.side-row svg {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.side-row:hover svg,
+.side-row.is-active svg {
+  color: var(--text-dim);
+}
+
+.side-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Ghost row: an invitation ("Start collaborating", "Add a note"), quieter
+   than real rows until hovered. */
+.side-row-ghost {
+  color: var(--text-faint);
+}
+
+/* Bottom menu: pinned under the scroll area, above the vault footer. */
+.side-bottom {
+  position: relative;
+  flex: 0 0 auto;
+  padding: 6px;
+  border-top: 1px solid var(--border);
+}
+
+/* Popover panel for Trash / Help, floated above the bottom menu. */
+.side-pop {
+  position: absolute;
+  z-index: 60;
+  bottom: calc(100% + 6px);
+  left: 8px;
+  right: 8px;
+  padding: 4px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+}
+
+.side-pop-title {
+  padding: 5px 8px 3px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+
+.side-pop-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 12px 12px;
+  text-align: center;
+  color: var(--text-faint);
+}
+
+.side-pop-empty span {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.side-pop-empty p {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.side-pop-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.side-pop-item:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.side-pop-item kbd {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--text-faint);
+  background: var(--bg-pane);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+/* Vault footer: the switcher's new home (Notion's workspace row, parked at the
+   bottom like Obsidian's vault switcher). */
+.vault-footer {
+  flex: 0 0 auto;
+  padding: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.vault-footer .vault-switcher {
+  width: 100%;
+}
+
+.vault-footer-btn {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.vault-footer-btn:hover,
+.vault-footer-btn.is-open {
+  background: var(--bg-hover);
+}
+
+.vault-footer-btn > svg {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.vault-footer-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.2;
+}
+
+.vault-footer-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.vault-footer-sub {
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The switcher menu, opening upward from the footer. */
+.vault-menu.is-up {
+  top: auto;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  min-width: 0;
+  max-width: none;
+}
+
+/* ---- My Tasks: main-area placeholder view ---- */
+.tasks-view {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.tasks-view-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tasks-view-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.tasks-empty {
+  margin: auto;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+}
+
+.tasks-empty-icon {
+  width: 52px;
+  height: 52px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  background: var(--bg-pane);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.tasks-empty-title {
+  margin: 4px 0 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.tasks-empty-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.tasks-empty-badge {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  background: var(--bg-pane);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+}

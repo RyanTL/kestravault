@@ -5,6 +5,7 @@ import { FileExplorer } from "@renderer/components/FileExplorer";
 import { Bookmarks } from "@renderer/components/Bookmarks";
 import { EditorGroup } from "@renderer/components/EditorGroup";
 import { GraphView } from "@renderer/components/GraphView";
+import { TasksView } from "@renderer/components/TasksView";
 import { RightSidebar } from "@renderer/components/RightSidebar";
 import { QuickSwitcher } from "@renderer/components/QuickSwitcher";
 import { SearchModal } from "@renderer/components/SearchModal";
@@ -18,6 +19,7 @@ import type { UpdateInfo } from "@renderer/env";
 import { useVault } from "@renderer/vault/useVault";
 import { useWorkspace } from "@renderer/vault/useWorkspace";
 import { useBookmarks } from "@renderer/vault/useBookmarks";
+import { useRecents } from "@renderer/vault/useRecents";
 import { useAi, type AiRewrite } from "@renderer/vault/useAi";
 import { useChats } from "@renderer/vault/useChats";
 import { PROVIDERS, useSettings } from "@renderer/vault/useSettings";
@@ -113,6 +115,7 @@ export default function App() {
   const ai = useAi(() => settings.aiConfig);
   const chats = useChats();
   const bookmarks = useBookmarks(vault.root);
+  const recents = useRecents(vault.root);
   // Mirror the "Track my activity" setting into the recorder so opens/edits are
   // only logged while the user has tracking on.
   useEffect(() => setActivityTracking(settings.trackActivity), [settings.trackActivity]);
@@ -133,6 +136,9 @@ export default function App() {
   const [leftView, setLeftView] = useState<"files" | "bookmarks">("files");
   const [showRight, setShowRight] = useState(false);
   const [showGraph, setShowGraph] = useState(false);
+  // The My Tasks placeholder view (sidebar bottom menu) — swaps in for the
+  // editor area like the graph does.
+  const [showTasks, setShowTasks] = useState(false);
   const [showAi, setShowAi] = useState(false);
   const [aiFull, setAiFull] = useState(false);
   const [aiSeed, setAiSeed] = useState<{ q: string; token: number } | null>(null);
@@ -309,10 +315,24 @@ export default function App() {
   }, [activeContent]);
 
   function openFile(path: string): void {
-    setShowGraph(false); // opening a note returns from the graph to the editor
+    setShowGraph(false); // opening a note returns from the graph/tasks to the editor
+    setShowTasks(false);
     ws.open(path);
     void vault.loadDoc(path);
+    recents.push(path);
     recordActivity({ type: "open", path, title: noteName(path) });
+  }
+
+  // Toggle the graph; it and My Tasks share the main area, so opening one
+  // dismisses the other.
+  function toggleGraph(): void {
+    setShowGraph((v) => !v);
+    setShowTasks(false);
+  }
+
+  function toggleTasks(): void {
+    setShowTasks((v) => !v);
+    setShowGraph(false);
   }
 
   // Switch the open vault: save pending edits to the current one, clear the
@@ -321,6 +341,7 @@ export default function App() {
   function leaveCurrentVault(): void {
     ws.reset();
     setShowGraph(false);
+    setShowTasks(false);
     setOverlay(null);
   }
   async function switchToVault(path: string): Promise<void> {
@@ -347,6 +368,7 @@ export default function App() {
     const actual = await vault.rename(path, next);
     ws.remapTab(path, actual);
     bookmarks.remap(path, actual);
+    recents.remap(path, actual);
   }
 
   // Move a note into another folder (drag-and-drop in the file tree). Returns
@@ -356,6 +378,7 @@ export default function App() {
     if (actual !== path) {
       ws.remapTab(path, actual);
       bookmarks.remap(path, actual);
+      recents.remap(path, actual);
       revealInTree(actual); // flash where it landed
     }
     return actual;
@@ -388,9 +411,10 @@ export default function App() {
       })(),
     toggleOverlay: (o: Exclude<Overlay, null>) => setOverlay((cur) => (cur === o ? null : o)),
     toggleAi: () => setShowAi((v) => !v),
-    toggleGraph: () => setShowGraph((v) => !v),
+    toggleGraph: () => toggleGraph(),
     dailyNote: () => openDailyNote(),
     openSettings: () => openSettings(),
+    toggleTasks: () => toggleTasks(),
     toggleBookmark: () => {
       if (activePath) bookmarks.toggle(activePath);
     },
@@ -446,7 +470,12 @@ export default function App() {
         id: "graph",
         title: showGraph ? "Close graph view" : "Open graph view",
         hint: "⌘⇧G",
-        run: () => setShowGraph((v) => !v),
+        run: () => actionsRef.current.toggleGraph(),
+      },
+      {
+        id: "my-tasks",
+        title: showTasks ? "Close My Tasks" : "Open My Tasks",
+        run: () => actionsRef.current.toggleTasks(),
       },
       {
         id: "toggle-left",
@@ -526,7 +555,14 @@ export default function App() {
       });
     }
     return list;
-  }, [showLeft, showRight, showAi, showGraph, ws, activePath, vault, bookmarks, settings.resolvedTheme]);
+  }, [showLeft, showRight, showAi, showGraph, showTasks, ws, activePath, vault, bookmarks, settings.resolvedTheme]);
+
+  // Recently opened notes for the sidebar's Recents section — only ones that
+  // still exist, capped to a short list.
+  const recentPaths = useMemo(() => {
+    const existing = new Set(vault.files.map((f) => f.path));
+    return recents.recents.filter((p) => existing.has(p)).slice(0, 5);
+  }, [recents.recents, vault.files]);
 
   return (
     <div className="app">
@@ -593,7 +629,7 @@ export default function App() {
           graphOpen={showGraph}
           onShowFiles={() => selectLeftView("files")}
           onShowBookmarks={() => selectLeftView("bookmarks")}
-          onShowGraph={() => setShowGraph((v) => !v)}
+          onShowGraph={toggleGraph}
           onSearch={() => setOverlay("search")}
           onDailyNote={openDailyNote}
           onCommand={() => setOverlay("commands")}
@@ -625,12 +661,14 @@ export default function App() {
               const actual = await vault.rename(p, next);
               ws.remapTab(p, actual);
               bookmarks.remap(p, actual);
+              recents.remap(p, actual);
             }}
             onMove={(p, dir) => moveNote(p, dir)}
             onDelete={async (p) => {
               await vault.remove(p);
               ws.dropPath(p);
               bookmarks.remove(p);
+              recents.remove(p);
             }}
             onToggleBookmark={bookmarks.toggle}
             onSetPrivacy={(path, target, mode) => vault.setPrivacy(path, target, mode)}
@@ -638,6 +676,10 @@ export default function App() {
             onReveal={(p) => void window.api.vault.reveal(p)}
             sharedWorkspaceName={sharedWorkspace}
             onStartCollaborating={() => openSettings("sync")}
+            recentPaths={recentPaths}
+            tasksOpen={showTasks}
+            onOpenTasks={toggleTasks}
+            onOpenCommandPalette={() => setOverlay("commands")}
           />
         ) : null}
 
@@ -666,7 +708,9 @@ export default function App() {
           />
         ) : null}
 
-        {!aiFull && !showGraph ? (
+        {!aiFull && showTasks ? <TasksView onClose={() => setShowTasks(false)} /> : null}
+
+        {!aiFull && !showGraph && !showTasks ? (
           <div className="editor-area">
             {ws.panes.map((pane) => (
               <EditorGroup
@@ -694,11 +738,11 @@ export default function App() {
           </div>
         ) : null}
 
-        {!aiFull && !showGraph && showRight ? (
+        {!aiFull && !showGraph && !showTasks && showRight ? (
           <ResizeHandle onResize={(dx) => setRightWidth((w) => w - dx)} />
         ) : null}
 
-        {!aiFull && !showGraph && showRight ? (
+        {!aiFull && !showGraph && !showTasks && showRight ? (
           <RightSidebar
             activePath={activePath}
             content={activeContent}

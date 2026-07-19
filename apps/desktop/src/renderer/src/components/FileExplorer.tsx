@@ -4,7 +4,19 @@ import type { VaultInfo, VaultNode } from "@renderer/vault/types";
 import { baseName, dirName, noteName } from "@renderer/vault/paths";
 import { VaultSwitcher } from "@renderer/components/VaultSwitcher";
 import { sortTree, useTreeOrder } from "@renderer/vault/useTreeOrder";
-import { ChevronRight, FolderPlus, FilePlus, Lock, CloudOff } from "lucide-react";
+import {
+  ChevronRight,
+  FolderPlus,
+  FilePlus,
+  Lock,
+  CloudOff,
+  FileText,
+  Users,
+  Plus,
+  SquareCheckBig,
+  Trash2,
+  CircleHelp,
+} from "lucide-react";
 
 function ChevronIcon() {
   return <ChevronRight size={12} strokeWidth={1.8} aria-hidden />;
@@ -45,6 +57,63 @@ function NotePlusIcon() {
   return <FilePlus size={15} strokeWidth={1.6} aria-hidden />;
 }
 
+// One collapsible sidebar group (Notion's Recents / Shared / Private). The
+// header row toggles the body; hover reveals the caret and any actions.
+function Section({
+  label,
+  collapsed,
+  onToggle,
+  actions,
+  children,
+}: {
+  label: string;
+  collapsed: boolean;
+  onToggle: () => void;
+  actions?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="side-section">
+      <div
+        className="side-section-header"
+        role="button"
+        tabIndex={0}
+        aria-expanded={!collapsed}
+        onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggle();
+          }
+        }}
+      >
+        <span className="side-section-label">{label}</span>
+        <span className={`side-section-caret${collapsed ? " is-collapsed" : ""}`}>
+          <ChevronRight size={11} strokeWidth={2} aria-hidden />
+        </span>
+        {actions ? (
+          <span className="side-section-actions" onClick={(e) => e.stopPropagation()}>
+            {actions}
+          </span>
+        ) : null}
+      </div>
+      {!collapsed ? children : null}
+    </section>
+  );
+}
+
+// Which sidebar sections are collapsed, remembered across sessions.
+const SECTIONS_KEY = "kestravault.side.collapsed";
+
+function loadCollapsedSections(): Set<string> {
+  try {
+    const raw = localStorage.getItem(SECTIONS_KEY);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+
 interface FileExplorerProps {
   tree: VaultNode[];
   vaultName: string;
@@ -75,6 +144,14 @@ interface FileExplorerProps {
   sharedWorkspaceName: string | null;
   /** Open the sharing settings (invite people / manage the workspace). */
   onStartCollaborating: () => void;
+  /** Recently opened notes, most recent first (already filtered to existing files). */
+  recentPaths: string[];
+  /** Whether the My Tasks view is showing in the main area. */
+  tasksOpen: boolean;
+  /** Open the My Tasks view in the main area. */
+  onOpenTasks: () => void;
+  /** Open the command palette (the Help menu's "Keyboard shortcuts" entry). */
+  onOpenCommandPalette: () => void;
 }
 
 // Drag-and-drop to move/reorder notes. We carry the note's path on a private
@@ -101,6 +178,10 @@ export function FileExplorer(props: FileExplorerProps) {
   const { tree, vaultName, selectedPath, revealPath, revealNonce, onSelect, onReveal } = props;
   const { order, place } = useTreeOrder();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Collapsed sidebar sections (Recents / Shared / Private), persisted.
+  const [closedSections, setClosedSections] = useState<Set<string>>(loadCollapsedSections);
+  // The small panel popped up from the bottom menu ("trash" or "help").
+  const [bottomPanel, setBottomPanel] = useState<"trash" | "help" | null>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -217,9 +298,52 @@ export function FileExplorer(props: FileExplorerProps) {
     prevTops.current = tops;
   }, [orderedTree, collapsed]);
 
+  // Persist which sections are collapsed.
+  useEffect(() => {
+    try {
+      localStorage.setItem(SECTIONS_KEY, JSON.stringify([...closedSections]));
+    } catch {
+      /* storage unavailable — collapse state simply won't persist */
+    }
+  }, [closedSections]);
+
+  function toggleSection(id: string): void {
+    setClosedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  // Close the trash/help popover on any outside interaction or Escape.
+  useEffect(() => {
+    if (!bottomPanel) return;
+    const close = (e: MouseEvent): void => {
+      const el = e.target as HTMLElement;
+      if (!el.closest(".side-pop") && !el.closest(".side-bottom")) setBottomPanel(null);
+    };
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") setBottomPanel(null);
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [bottomPanel]);
+
   // Reveal a folder/note: expand its ancestors, scroll it into view, flash it.
   useEffect(() => {
     if (!revealPath) return;
+    // The tree lives in the Private section — make sure it's showing.
+    setClosedSections((prev) => {
+      if (!prev.has("private")) return prev;
+      const next = new Set(prev);
+      next.delete("private");
+      return next;
+    });
     const parts = revealPath.split("/");
     const toOpen: string[] = [];
     for (let i = 1; i < parts.length; i++) toOpen.push(parts.slice(0, i).join("/"));
@@ -618,30 +742,9 @@ export function FileExplorer(props: FileExplorerProps) {
 
   return (
     <nav className="pane pane-left">
-      <header className="pane-header">
-        <VaultSwitcher
-          vaults={props.vaults}
-          fallbackName={vaultName}
-          onSwitch={props.onSwitchVault}
-          onOpenFolder={props.onOpenVaultFolder}
-          onCreate={props.onCreateVault}
-          onRemove={props.onRemoveVault}
-          sharedWorkspaceName={props.sharedWorkspaceName}
-          onManageSharing={props.onStartCollaborating}
-        />
-        <span className="pane-actions">
-          <button className="icon-btn" title="New note" onClick={() => void createNoteIn("")}>
-            <NotePlusIcon />
-          </button>
-          <button className="icon-btn" title="New folder" onClick={() => void createFolderIn("")}>
-            <FolderPlusIcon />
-          </button>
-        </span>
-      </header>
-
       <div
         ref={scrollRef}
-        className={`tree-scroll${rootDrop ? " is-drop-root" : ""}`}
+        className={`tree-scroll side-scroll${rootDrop ? " is-drop-root" : ""}`}
         onKeyDown={onTreeKeyDown}
         onContextMenu={(e) => openMenu(e, null)}
         onDragOver={(e) => {
@@ -665,8 +768,169 @@ export function FileExplorer(props: FileExplorerProps) {
           if (!e.currentTarget.contains(e.relatedTarget as Node)) setDrop(null);
         }}
       >
-        <ul className="tree-root">{orderedTree.map((n) => renderNode(n, 0))}</ul>
+        {props.recentPaths.length > 0 ? (
+          <Section
+            label="Recents"
+            collapsed={closedSections.has("recents")}
+            onToggle={() => toggleSection("recents")}
+          >
+            <ul className="side-list">
+              {props.recentPaths.map((p) => (
+                <li key={p}>
+                  <button
+                    className={`side-row${p === selectedPath ? " is-active" : ""}`}
+                    title={p}
+                    onClick={() => onSelect(p)}
+                  >
+                    <FileText size={15} strokeWidth={1.6} aria-hidden />
+                    <span className="side-row-label">{noteName(p)}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </Section>
+        ) : null}
+
+        <Section
+          label="Shared"
+          collapsed={closedSections.has("shared")}
+          onToggle={() => toggleSection("shared")}
+        >
+          <button
+            className={`side-row${props.sharedWorkspaceName ? "" : " side-row-ghost"}`}
+            onClick={props.onStartCollaborating}
+          >
+            {props.sharedWorkspaceName ? (
+              <Users size={15} strokeWidth={1.6} aria-hidden />
+            ) : (
+              <Plus size={15} strokeWidth={1.6} aria-hidden />
+            )}
+            <span className="side-row-label">
+              {props.sharedWorkspaceName ?? "Start collaborating"}
+            </span>
+          </button>
+        </Section>
+
+        <Section
+          label="Private"
+          collapsed={closedSections.has("private")}
+          onToggle={() => toggleSection("private")}
+          actions={
+            <>
+              <button
+                className="icon-btn side-action"
+                title="New note"
+                onClick={() => void createNoteIn("")}
+              >
+                <NotePlusIcon />
+              </button>
+              <button
+                className="icon-btn side-action"
+                title="New folder"
+                onClick={() => void createFolderIn("")}
+              >
+                <FolderPlusIcon />
+              </button>
+            </>
+          }
+        >
+          <ul className="tree-root">{orderedTree.map((n) => renderNode(n, 0))}</ul>
+          {orderedTree.length === 0 ? (
+            <button className="side-row side-row-ghost" onClick={() => void createNoteIn("")}>
+              <Plus size={15} strokeWidth={1.6} aria-hidden />
+              <span className="side-row-label">Add a note</span>
+            </button>
+          ) : null}
+        </Section>
       </div>
+
+      <div className="side-bottom">
+        {bottomPanel === "trash" ? (
+          <div className="side-pop" role="dialog" aria-label="Trash">
+            <div className="side-pop-title">Trash</div>
+            <div className="side-pop-empty">
+              <Trash2 size={20} strokeWidth={1.5} aria-hidden />
+              <span>Trash is empty</span>
+              <p>
+                Deleted notes are removed permanently for now — a recoverable Trash is on the
+                roadmap.
+              </p>
+            </div>
+          </div>
+        ) : null}
+        {bottomPanel === "help" ? (
+          <div className="side-pop" role="menu" aria-label="Help">
+            <button
+              className="side-pop-item"
+              role="menuitem"
+              onClick={() => {
+                setBottomPanel(null);
+                props.onOpenCommandPalette();
+              }}
+            >
+              <span>Keyboard shortcuts &amp; commands</span>
+              <kbd>⌘P</kbd>
+            </button>
+            <a
+              className="side-pop-item"
+              role="menuitem"
+              href="https://github.com/RyanTL/kestravault#readme"
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => setBottomPanel(null)}
+            >
+              <span>Documentation</span>
+            </a>
+            <a
+              className="side-pop-item"
+              role="menuitem"
+              href="https://github.com/RyanTL/kestravault/issues"
+              target="_blank"
+              rel="noreferrer"
+              onClick={() => setBottomPanel(null)}
+            >
+              <span>Report an issue</span>
+            </a>
+          </div>
+        ) : null}
+
+        <button
+          className={`side-row${props.tasksOpen ? " is-active" : ""}`}
+          onClick={props.onOpenTasks}
+        >
+          <SquareCheckBig size={15} strokeWidth={1.6} aria-hidden />
+          <span className="side-row-label">My Tasks</span>
+        </button>
+        <button
+          className={`side-row${bottomPanel === "trash" ? " is-active" : ""}`}
+          aria-expanded={bottomPanel === "trash"}
+          onClick={() => setBottomPanel((p) => (p === "trash" ? null : "trash"))}
+        >
+          <Trash2 size={15} strokeWidth={1.6} aria-hidden />
+          <span className="side-row-label">Trash</span>
+        </button>
+        <button
+          className={`side-row${bottomPanel === "help" ? " is-active" : ""}`}
+          aria-expanded={bottomPanel === "help"}
+          onClick={() => setBottomPanel((p) => (p === "help" ? null : "help"))}
+        >
+          <CircleHelp size={15} strokeWidth={1.6} aria-hidden />
+          <span className="side-row-label">Help</span>
+        </button>
+      </div>
+
+      <footer className="vault-footer">
+        <VaultSwitcher
+          vaults={props.vaults}
+          fallbackName={vaultName}
+          onSwitch={props.onSwitchVault}
+          onOpenFolder={props.onOpenVaultFolder}
+          onCreate={props.onCreateVault}
+          onRemove={props.onRemoveVault}
+          sharedWorkspaceName={props.sharedWorkspaceName}
+          onManageSharing={props.onStartCollaborating}
+        />
+      </footer>
 
       {menu ? (
         <ul className="context-menu" style={{ left: menu.x, top: menu.y }}>

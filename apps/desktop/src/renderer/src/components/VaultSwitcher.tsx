@@ -1,14 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { VaultInfo } from "@renderer/vault/types";
-import { ChevronDown, Check, Users } from "lucide-react";
+import { ChevronsUpDown, Check, Users } from "lucide-react";
 
-// The vault name in the file-explorer header doubles as a switcher (Obsidian's
-// "manage vaults" affordance): click it to drop down the list of known vaults,
-// switch between them, or open/create another.
-
-function ChevronDownIcon() {
-  return <ChevronDown size={11} strokeWidth={1.8} aria-hidden />;
-}
+// The vault switcher lives at the very bottom of the left sidebar (Obsidian
+// parks its vault switcher bottom-left too): a Notion-workspace-style row with
+// the vault's avatar and name. Clicking it drops UP a menu with the list of
+// known vaults, sharing, and the open/create options.
 
 function CheckIcon() {
   return <Check size={13} strokeWidth={1.8} aria-hidden />;
@@ -62,18 +59,23 @@ export function VaultSwitcher({
   return (
     <div className="vault-switcher" ref={ref}>
       <button
-        className={`vault-switcher-btn${open ? " is-open" : ""}`}
+        className={`vault-footer-btn${open ? " is-open" : ""}`}
         title="Switch vault"
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
-        <span className="vault-switcher-name">{label}</span>
-        <ChevronDownIcon />
+        <span className="vault-footer-text">
+          <span className="vault-footer-name">{label}</span>
+          <span className="vault-footer-sub">
+            {sharedWorkspaceName ? `Shared · ${sharedWorkspaceName}` : "Local vault"}
+          </span>
+        </span>
+        <ChevronsUpDown size={13} strokeWidth={1.8} aria-hidden />
       </button>
 
       {open ? (
-        <div className="vault-menu" role="menu">
+        <div className="vault-menu is-up" role="menu">
           <div className="vault-menu-label">Vaults</div>
           <ul className="vault-menu-list">
             {vaults.map((v) => (
