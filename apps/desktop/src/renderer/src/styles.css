@@ -582,14 +582,16 @@ body.is-col-resizing {
 }
 
 .explorer-sort {
-  position: relative;
+  /* Static on purpose: the menu anchors to the toolbar (position: relative)
+     so it aligns with the panel edge instead of spilling past it. */
+  position: static;
 }
 
 .explorer-sort-menu {
   position: absolute;
   z-index: 70;
-  top: calc(100% + 5px);
-  right: 0;
+  top: calc(100% + 2px);
+  left: 8px;
   width: 210px;
   padding: 4px;
   background: var(--bg-raised);

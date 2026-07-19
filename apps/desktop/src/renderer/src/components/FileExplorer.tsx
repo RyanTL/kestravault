@@ -22,7 +22,6 @@ import {
   SquarePen,
   SquareCheckBig,
   Trash2,
-  Users,
 } from "lucide-react";
 
 function ChevronIcon() {
@@ -64,7 +63,7 @@ function NotePlusIcon() {
   return <SquarePen size={18} strokeWidth={1.7} aria-hidden />;
 }
 
-// One collapsible sidebar group (Notion's Recents / Shared / Private). The
+// One collapsible sidebar group (Notion's Recents / Private). The
 // header row toggles the body; hover reveals the caret and any actions.
 function Section({
   label,
@@ -217,7 +216,7 @@ export function FileExplorer(props: FileExplorerProps) {
   const { tree, vaultName, selectedPath, revealPath, revealNonce, onSelect, onReveal } = props;
   const { order, place, sortMode, setSortMode } = useTreeOrder();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-  // Collapsed sidebar sections (Recents / Shared / Private), persisted.
+  // Collapsed sidebar sections (Recents / Private), persisted.
   const [closedSections, setClosedSections] = useState<Set<string>>(loadCollapsedSections);
   // The small panel popped up from the bottom menu ("trash" or "help").
   const [bottomPanel, setBottomPanel] = useState<"trash" | "help" | null>(null);
@@ -922,26 +921,6 @@ export function FileExplorer(props: FileExplorerProps) {
             </ul>
           </Section>
         ) : null}
-
-        <Section
-          label="Shared"
-          collapsed={closedSections.has("shared")}
-          onToggle={() => toggleSection("shared")}
-        >
-          <button
-            className={`side-row${props.sharedWorkspaceName ? "" : " side-row-ghost"}`}
-            onClick={props.onStartCollaborating}
-          >
-            {props.sharedWorkspaceName ? (
-              <Users size={15} strokeWidth={1.6} aria-hidden />
-            ) : (
-              <Plus size={15} strokeWidth={1.6} aria-hidden />
-            )}
-            <span className="side-row-label">
-              {props.sharedWorkspaceName ?? "Start collaborating"}
-            </span>
-          </button>
-        </Section>
 
         <Section
           label="Private"
